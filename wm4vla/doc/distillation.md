@@ -190,10 +190,10 @@ CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
 CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
     --ckpt ${CHECKPOINTS_DIR}/${CHECKPOINT_ITER}/model_ema_bf16.pt \
     --task-indices 0 \
-    --num-steps 4 \
+    --num-steps 1 \
     --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
-    --save-images outputs/eval_distill/images_step4 \
-    --output outputs/eval_distill/task0_step4.json
+    --save-images outputs/eval_distill/images_step1 \
+    --output outputs/eval_distill/task0_step1.json
 ```
 
 ### 输出结果格式

@@ -201,7 +201,7 @@ cython_debug/
 /outputs/
 /results/
 /tmp/
-wm-output/
+/wm-output/
 
 !assets/**/*.png
 !assets/**/*.jpg
