@@ -270,7 +270,19 @@ VideoPredictionConditionerV2: LazyDict = L(Video2WorldConditionerV2)(
 )
 
 ActionConditionedConditionerConfig: LazyDict = L(ActionConditionedConditioner)(
-    **_SHARED_CONFIG,
+    **{k: v for k, v in _SHARED_CONFIG.items() if k not in ("text", "use_video_condition")},
+    # Pure conditional training: dropout_rate=0.0 disables CFG dropout for both text and
+    # video conditioning. Inference uses guidance=0 (single forward pass, ~2x faster).
+    text=L(TextAttr)(
+        input_key=["t5_text_embeddings"],
+        dropout_rate=0.0,
+        use_empty_string=False,
+    ),
+    use_video_condition=L(BooleanFlag)(
+        input_key="fps",
+        output_key="use_video_condition",
+        dropout_rate=0.0,
+    ),
     action=L(ReMapkey)(
         input_key="action",
         output_key="action",

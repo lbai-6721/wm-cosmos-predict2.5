@@ -52,6 +52,7 @@ def make_experiment(
     resolution: str = "720",
     cp_size: int = 4,  # context parallel size
     fsdp_size: int = 8,
+    tokenizer: str = "wan2pt1_tokenizer",
     overrides: dict | None = None,
 ) -> LazyDict:
     defaults = [
@@ -63,7 +64,7 @@ def make_experiment(
         {"override /condition_postprocessor": condition_postprocessor},
         {"override /ckpt_type": "dcp_distill"},
         {"override /checkpoint": "s3"},
-        {"override /tokenizer": "wan2pt1_tokenizer"},
+        {"override /tokenizer": tokenizer},
         {"override /optimizer": "fusedadamw"},
         {
             "override /callbacks": [

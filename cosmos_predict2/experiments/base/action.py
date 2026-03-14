@@ -16,10 +16,11 @@
 from hydra.core.config_store import ConfigStore
 
 from cosmos_predict2._src.imaginaire.lazy_config import LazyDict
+from cosmos_predict2._src.imaginaire.utils.checkpoint_db import get_checkpoint_path
 from cosmos_predict2.config import MODEL_CHECKPOINTS, ModelKey
 
 # Use the post-trained checkpoint which has the correct experiment reference
-DEFAULT_CHECKPOINT = MODEL_CHECKPOINTS[ModelKey(post_trained=False)]  # This uses post_trained=True by default
+DEFAULT_CHECKPOINT = MODEL_CHECKPOINTS[ModelKey()]  # This uses post_trained=True by default
 
 
 """
@@ -47,7 +48,8 @@ ac_reason_embeddings_rectified_flow_2b_256_320 = LazyDict(
         ),
         checkpoint=dict(
             save_iter=2_000,
-            load_path="s3://bucket/cosmos_diffusion_v2/official_runs_text2world/Stage-c_pt_4-reason_embeddings-v1p1-Index-26-Size-2B-Res-720-Fps-16-Note-T2V_high_sigma_loss_reweighted/checkpoints/iter_000010000/model",
+            # pyrefly: ignore  # missing-attribute
+            load_path=get_checkpoint_path(DEFAULT_CHECKPOINT.s3.uri),
             load_training_state=False,
             strict_resume=False,
             load_from_object_store=dict(
@@ -134,3 +136,8 @@ for _item in [ac_reason_embeddings_rectified_flow_2b_256_320]:
     experiment_name = [name.lower() for name, value in globals().items() if value is _item][0]  # noqa: RUF015
 
     cs.store(group="experiment", package="_global_", name=f"{experiment_name}", node=_item)
+
+# Register wm4vla experiments (Kinetix / LIBERO variants).
+from wm4vla.configs.experiments import register_wm4vla_experiments  # noqa: E402
+
+register_wm4vla_experiments()

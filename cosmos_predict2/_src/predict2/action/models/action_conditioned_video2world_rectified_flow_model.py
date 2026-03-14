@@ -287,6 +287,9 @@ class ActionVideo2WorldModelRectifiedFlow(Text2WorldModelRectifiedFlow):
 
         def velocity_fn(noise: torch.Tensor, noise_x: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
             cond_v = self.denoise(noise, noise_x, timestep, condition)
+            if guidance == 0:
+                # Pure conditional inference: skip unconditional forward pass (~2x faster).
+                return cond_v
             uncond_v = self.denoise(noise, noise_x, timestep, uncondition)
             velocity_pred = cond_v + guidance * (cond_v - uncond_v)
             return velocity_pred

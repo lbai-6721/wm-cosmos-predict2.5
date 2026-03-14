@@ -167,8 +167,14 @@ def _build_no_s3_run(job: LazyDict) -> LazyDict:
     no_s3_job = deepcopy(job)
 
     teacher_load_path = no_s3_job["model"]["config"]["teacher_load_from"]["load_path"]
+    # Only call get_checkpoint_path for S3 URIs or UUIDs; local paths are used as-is
+    resolved_path = (
+        teacher_load_path
+        if teacher_load_path.startswith("/") or teacher_load_path.startswith("./")
+        else get_checkpoint_path(teacher_load_path)
+    )
     no_s3_job["model"]["config"]["teacher_load_from"] = {
-        "load_path": get_checkpoint_path(teacher_load_path),
+        "load_path": resolved_path,
         "credentials": None,
     }
 
@@ -193,16 +199,201 @@ def _build_no_s3_run(job: LazyDict) -> LazyDict:
     return no_s3_job
 
 
+# LIBERO LeRobot 256×256 dual-cam task0 - 17 frame prediction (state_t=5)
+# Teacher: ActionConditionedMinimalV1LVGDiT, action_dim=8, num_action_per_chunk=1
+dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = make_experiment(
+    name="dmd2_trigflow_distill_wm_libero_lerobot_256_task0",
+    data_train="lerobot_libero_dual_cam_256_task0_train",
+    net="cosmos_v1_2B_action_conditioned_student",
+    net_teacher="cosmos_v1_2B_action_conditioned_teacher",
+    net_fake_score="cosmos_v1_2B_action_conditioned_fake_score",
+    conditioner="action_conditioned_video_conditioner",
+    # Teacher was trained with wan2pt1_tokenizer (DEFAULT_CHECKPOINT.experiment overrides wan2pt2→wan2pt1)
+    tokenizer="wan2pt1_tokenizer",
+    resolution="256",
+    cp_size=1,
+    overrides=dict(
+        model=dict(
+            config=dict(
+                # 17 pixel frames → 5 latent frames (temporal compression = 4, +1 blank)
+                state_t=5,
+                # Teacher trained without clean cond timesteps (conditional_frame_timestep=-1.0)
+                use_clean_cond_timesteps=False,
+                # Teacher trained with adjust_video_noise=False → multiplier must be 1.0
+                multiply_noise_by_video_len=False,
+                # Always 3 conditional frames (blank + cam1_t + cam2_t)
+                conditional_frames_probs={0: 0.0, 1: 0.0, 2: 0.0, 3: 1.0},
+                min_num_conditional_frames=3,
+                max_num_conditional_frames=3,
+                # 4-GPU single-node training
+                fsdp_shard_size=4,
+                # Use precomputed T5 embeddings from data batch
+                text_encoder_config=None,
+                # Use local tokenizer VAE to avoid S3 download (credentials/s3_training.secret not needed)
+                tokenizer=dict(
+                    vae_pth="/home/kyji/.cache/huggingface/hub/models--nvidia--Cosmos-Predict2.5-2B/snapshots/6787e176dce74a101d922174a95dba29fa5f0c55/tokenizer.pth",
+                ),
+                net=dict(
+                    action_dim=8,
+                    num_action_per_chunk=1,
+                    use_crossattn_projection=False,
+                ),
+                net_fake_score=dict(
+                    action_dim=8,
+                    num_action_per_chunk=1,
+                    use_crossattn_projection=False,
+                ),
+                net_teacher=dict(
+                    action_dim=8,
+                    num_action_per_chunk=1,
+                    use_crossattn_projection=False,
+                ),
+                teacher_load_from=dict(
+                    load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt",
+                    credentials=None,
+                ),
+                teacher_guidance=0,
+                student_update_freq=5,
+            ),
+        ),
+        dataloader_train=dict(batch_size=2),
+        # Disable all S3 I/O for local training (no credentials needed)
+        upload_reproducible_setup=False,
+        checkpoint=dict(
+            save_to_object_store=dict(enabled=False),
+            load_from_object_store=dict(enabled=False),
+        ),
+        trainer=dict(
+            straggler_detection=dict(enabled=False),
+            callbacks=dict(
+                # Disable val-prompt sampling: requires online text encoder which we don't have
+                every_n_sample_reg=dict(do_sample_val_prompts=False, save_s3=False),
+                every_n_sample_ema=dict(do_sample_val_prompts=False, save_s3=False),
+                heart_beat=dict(save_s3=False),
+                iter_speed=dict(save_s3=False),
+                device_monitor=dict(save_s3=False),
+                wandb=dict(save_s3=False),
+                wandb_10x=dict(save_s3=False),
+                dataloader_speed=dict(save_s3=False),
+            ),
+        ),
+    ),
+)
+# Remove nested dataloaders structure inherited from make_experiment
+del dmd2_trigflow_distill_wm_libero_lerobot_256_task0["dataloader_train"]["dataloaders"]
+
+
+# Kinetix 128×128 - 9 frame prediction (state_t=3)
+# Teacher: ActionConditionedMinimalV1LVGDiT, action_dim=7, num_action_per_chunk=1
+dmd2_trigflow_distill_wm_kinetix_128_9frame = make_experiment(
+    name="dmd2_trigflow_distill_wm_kinetix_128_9frame",
+    data_train="kinetix_5frame_128_train",
+    net="cosmos_v1_2B_action_conditioned_student",
+    net_teacher="cosmos_v1_2B_action_conditioned_teacher",
+    net_fake_score="cosmos_v1_2B_action_conditioned_fake_score",
+    conditioner="action_conditioned_video_conditioner",
+    # Teacher was trained with wan2pt1_tokenizer (DEFAULT_CHECKPOINT.experiment overrides wan2pt2→wan2pt1)
+    tokenizer="wan2pt1_tokenizer",
+    resolution="128",
+    cp_size=1,
+    overrides=dict(
+        model=dict(
+            config=dict(
+                # 9 pixel frames → 3 latent frames (temporal compression = 4, +1 blank)
+                state_t=3,
+                # Teacher trained without clean cond timesteps (conditional_frame_timestep=-1.0)
+                use_clean_cond_timesteps=False,
+                # Teacher trained with adjust_video_noise=False → multiplier must be 1.0
+                multiply_noise_by_video_len=False,
+                # Always 2 conditional frames (blank + obs_t)
+                conditional_frames_probs={0: 0.0, 1: 0.0, 2: 1.0},
+                min_num_conditional_frames=2,
+                max_num_conditional_frames=2,
+                # 4-GPU single-node training
+                fsdp_shard_size=4,
+                # Kinetix has no text condition (uses zero T5 embeddings from data batch)
+                text_encoder_config=None,
+                # Use local tokenizer VAE to avoid S3 download (credentials/s3_training.secret not needed)
+                tokenizer=dict(
+                    vae_pth="/home/kyji/.cache/huggingface/hub/models--nvidia--Cosmos-Predict2.5-2B/snapshots/6787e176dce74a101d922174a95dba29fa5f0c55/tokenizer.pth",
+                ),
+                net=dict(
+                    action_dim=7,
+                    num_action_per_chunk=1,
+                    use_crossattn_projection=False,
+                ),
+                net_fake_score=dict(
+                    action_dim=7,
+                    num_action_per_chunk=1,
+                    use_crossattn_projection=False,
+                ),
+                net_teacher=dict(
+                    action_dim=7,
+                    num_action_per_chunk=1,
+                    use_crossattn_projection=False,
+                ),
+                teacher_load_from=dict(
+                    # TODO: Replace with actual Kinetix teacher checkpoint path
+                    load_path="/path/to/kinetix/model_ema_bf16.pt",
+                    credentials=None,
+                ),
+                teacher_guidance=0,
+                student_update_freq=5,
+            ),
+        ),
+        dataloader_train=dict(batch_size=4),
+        # Disable all S3 I/O for local training (no credentials needed)
+        upload_reproducible_setup=False,
+        checkpoint=dict(
+            save_to_object_store=dict(enabled=False),
+            load_from_object_store=dict(enabled=False),
+        ),
+        trainer=dict(
+            straggler_detection=dict(enabled=False),
+            callbacks=dict(
+                # Disable val-prompt sampling: requires online text encoder which we don't have
+                every_n_sample_reg=dict(do_sample_val_prompts=False, save_s3=False),
+                every_n_sample_ema=dict(do_sample_val_prompts=False, save_s3=False),
+                heart_beat=dict(save_s3=False),
+                iter_speed=dict(save_s3=False),
+                device_monitor=dict(save_s3=False),
+                wandb=dict(save_s3=False),
+                wandb_10x=dict(save_s3=False),
+                dataloader_speed=dict(save_s3=False),
+            ),
+        ),
+    ),
+)
+# Remove nested dataloaders structure inherited from make_experiment
+del dmd2_trigflow_distill_wm_kinetix_128_9frame["dataloader_train"]["dataloaders"]
+
+
 cs = ConfigStore.instance()
 """
-2B:
-torchrun --nproc_per_node=4 --master_port=12340 -m scripts.train --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py -- experiment=dmd2_trigflow_distill_cosmos_predict2_2B_bidirectional_TnI2V
+4-GPU single-node distillation commands:
 
-14B: requires fsdp_size=32, cannot be run on single node. Please try submitting a >=4 node job to verify.
+LIBERO task0 (256x256, 17 frames):
+torchrun --nproc_per_node=4 --master_port=12340 \
+  -m scripts.train \
+  --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
+  -- experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 \
+  job.wandb_mode=disabled
+
+Kinetix (128x128, 9 frames):
+torchrun --nproc_per_node=4 --master_port=12342 \
+  -m scripts.train \
+  --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
+  -- experiment=dmd2_trigflow_distill_wm_kinetix_128_9frame \
+  job.wandb_mode=disabled
+
+2B (original Bridge):
+torchrun --nproc_per_node=4 --master_port=12340 -m scripts.train --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py -- experiment=dmd2_trigflow_distill_cosmos_predict2_2B_bidirectional_TnI2V
 """
 for _item in [
     dmd2_trigflow_distill_cosmos_predict2_2B_action_conditioned_bridge_13frame_256x320,
     dmd2_trigflow_distill_cosmos_predict2_2B_action_conditioned_bridge_13frame_480x640,
+    dmd2_trigflow_distill_wm_libero_lerobot_256_task0,
+    dmd2_trigflow_distill_wm_kinetix_128_9frame,
 ]:
     cs.store(
         group="experiment",
