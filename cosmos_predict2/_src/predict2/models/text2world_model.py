@@ -626,9 +626,9 @@ class DiffusionModel(ImaginaireModel):
                     timestep = torch.stack(timestep) / 1000
                     noise_pred = x0_fn(latent_model_input, timestep.unsqueeze(0))
                     temp_x0 = sample_scheduler.step(
-                        noise_pred.unsqueeze(0), t, latents[0].unsqueeze(0), return_dict=False, generator=seed_g
+                        noise_pred, t, latents, return_dict=False, generator=seed_g
                     )[0]
-                    latents = temp_x0.squeeze(0)
+                    latents = temp_x0
 
                 if self.net.is_context_parallel_enabled:
                     if use_spatial_split:

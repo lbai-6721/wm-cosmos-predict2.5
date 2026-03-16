@@ -4,7 +4,7 @@ Extracted from cosmos_predict2/experiments/base/action.py.
 Registers five experiments into Hydra ConfigStore:
   - ac_kinetix_pixels_2b             (Kinetix, 128×128, 9 frames)
   - ac_libero_pixels_2b              (LIBERO HDF5, 128×128, 13 frames)
-  - ac_libero_lerobot_256_pixels_2b  (LIBERO LeRobot, 256×256, 17 frames)
+  - ac_libero_lerobot_256_pixels_2b  (LIBERO LeRobot, 256×256, paired 5-frame views)
   - ac_libero_lerobot_256_pixels_2b_task0   (single-task ablation)
   - ac_libero_lerobot_256_pixels_2b_task01  (two-task ablation)
 """
@@ -148,7 +148,7 @@ ac_libero_pixels_2b = LazyDict(
 )
 
 
-# ── LIBERO LeRobot dual-camera (256×256, 17 frames, state_t=5) ──────────────
+# ── LIBERO LeRobot paired-view short-video (256×256, 5 frames, state_t=2) ──
 
 def _libero_lerobot_256_base(
     data_train: str,
@@ -192,10 +192,10 @@ def _libero_lerobot_256_base(
             model_parallel=dict(context_parallel_size=1),
             model=dict(
                 config=dict(
-                    min_num_conditional_frames=3,
-                    max_num_conditional_frames=3,
+                    min_num_conditional_frames=1,
+                    max_num_conditional_frames=1,
                     conditional_frames_probs=None,
-                    state_t=5,
+                    state_t=2,
                     text_encoder_config=None,
                     net=dict(
                         action_dim=8,

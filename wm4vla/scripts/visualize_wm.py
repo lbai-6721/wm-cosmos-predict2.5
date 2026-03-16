@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """visualize_wm.py
 
-直接输出 World Model 生成的原始 17 帧视频（mp4）。
+直接输出 World Model 生成的原始 5 帧视频（mp4，paired 双 batch）。
 
-视频帧结构（state_t=5，dual-cam 17 帧）：
-  Frame 0      : 空白               ← 空白锚帧
-  Frames 1-4   : cam1_t ×4         ← 条件帧（第一视角，重复4次）
-  Frames 5-8   : cam2_t ×4         ← 条件帧（腕部视角，重复4次）
-  Frames 9-12  : cam1 预测 ×4     ← WM 预测的第一视角（取 frame 9）
-  Frames 13-16 : cam2 预测 ×4     ← WM 预测的腕部视角（取 frame 13）
+视频帧结构（state_t=2，paired batch）：
+  Batch 0:
+    Frame 0      : cam1_t          ← 条件帧（第三视角）
+    Frames 1-4   : cam1 预测 ×4    ← WM 预测 cam1（取 frame 1）
+  Batch 1:
+    Frame 0      : cam2_t          ← 条件帧（腕部）
+    Frames 1-4   : cam2 预测 ×4    ← WM 预测 cam2（取 frame 1）
 
 输出：每次推理生成一个 mp4，帧序就是模型原始输出顺序，可直接用播放器观看。
 可选追加 GT 对比（--with-gt 模式下，在每帧右侧加对应 GT）。
@@ -46,15 +47,15 @@ _CAM1_KEY = "observation.images.image"
 _CAM2_KEY = "observation.images.wrist_image"
 _ACT_KEY  = "action"
 _DEFAULT_DATA_ROOT = (
-    "/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/lerobot"
-    "/lerobot--libero_10_image@v2.0"
+    "/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/lerobot"
+    "/lerobot--libero_spatial_image@v2.0"
 )
 _EXPERIMENT_NAME_FULL = "ac_libero_lerobot_256_pixels_2b"
 _EXPERIMENT_NAME_TASK01 = "ac_libero_lerobot_256_pixels_2b_task01"
 _EXPERIMENT_NAME_TASK0 = "ac_libero_lerobot_256_pixels_2b_task0"
 _CONFIG_FILE      = "cosmos_predict2/_src/predict2/action/configs/action_conditioned/config.py"
-_NUM_LATENT_COND  = 3    # state_t=5 → 3 conditioning latent frames
-_NUM_VIDEO_FRAMES = 17   # 1 + (5-1)×4 = 17 pixel frames
+_NUM_LATENT_COND  = 1    # state_t=2 → 1 conditioning latent frame
+_NUM_VIDEO_FRAMES = 5    # 1 + (2-1)×4 = 5 pixel frames
 _RESOLUTION       = "256,256"
 _MAX_DELAY        = 5
 
@@ -76,10 +77,10 @@ def tensor_to_uint8(t: torch.Tensor) -> np.ndarray:
     return (img * 255).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
 
 
-def video_tensor_to_frames(video: torch.Tensor) -> list[np.ndarray]:
-    """[1, 3, T, H, W] float [-1, 1] → list of T (H, W, 3) uint8 arrays"""
+def video_tensor_to_frames(video: torch.Tensor, batch_idx: int = 0) -> list[np.ndarray]:
+    """[B, 3, T, H, W] float [-1,1] → list of T RGB uint8 frames for one batch index."""
     T = video.shape[2]
-    return [tensor_to_uint8(video[0, :, t]) for t in range(T)]
+    return [tensor_to_uint8(video[batch_idx, :, t]) for t in range(T)]
 
 
 def save_mp4(frames: list[np.ndarray], path: str, fps: int = 4):
@@ -109,37 +110,22 @@ def save_mp4(frames: list[np.ndarray], path: str, fps: int = 4):
 
 
 def build_input_video(cam1_t: np.ndarray, cam2_t: np.ndarray) -> torch.Tensor:
-    """构建 17 帧 WM 输入，conditioning 帧 + 零占位帧。[1, 3, 17, H, W] uint8
+    """构建 paired 5 帧 WM 输入（uint8）。
 
-    帧布局（与 dataset_lerobot_libero.py 完全一致，state_t=5）：
-      Frame 0      : zeros     ← 空白锚帧（latent 0）
-      Frames 1–4   : cam1_t×4  ← conditioning latent 1（第三视角当前帧）
-      Frames 5–8   : cam2_t×4  ← conditioning latent 2（腕部当前帧）
-      Frames 9–12  : zeros     ← 待预测 cam1_{t+d+1}（latent 3）
-      Frames 13–16 : zeros     ← 待预测 cam2_{t+d+1}（latent 4）
+    帧布局（与 dataset_lerobot_libero.py 完全一致，state_t=2）：
+      Batch 0:
+        Frame 0    : cam1_t
+        Frames 1–4 : zeros（待预测 cam1）
+      Batch 1:
+        Frame 0    : cam2_t
+        Frames 1–4 : zeros（待预测 cam2）
     """
     H, W = cam1_t.shape[:2]
     blank = np.zeros((H, W, 3), dtype=np.uint8)
-    frames = np.stack([
-        blank,    # 0  : 空白锚帧
-        cam1_t,   # 1  : conditioning cam1
-        cam1_t,   # 2
-        cam1_t,   # 3
-        cam1_t,   # 4
-        cam2_t,   # 5  : conditioning cam2
-        cam2_t,   # 6
-        cam2_t,   # 7
-        cam2_t,   # 8
-        blank,    # 9  : 待预测 cam1
-        blank,    # 10
-        blank,    # 11
-        blank,    # 12
-        blank,    # 13 : 待预测 cam2
-        blank,    # 14
-        blank,    # 15
-        blank,    # 16
-    ], axis=0)  # [17, H, W, 3]
-    return torch.from_numpy(frames).permute(3, 0, 1, 2).unsqueeze(0)
+    cam1_frames = np.stack([cam1_t, blank, blank, blank, blank], axis=0)
+    cam2_frames = np.stack([cam2_t, blank, blank, blank, blank], axis=0)
+    paired = np.stack([cam1_frames, cam2_frames], axis=0)  # [2, 5, H, W, 3]
+    return torch.from_numpy(paired).permute(0, 4, 1, 2, 3)  # [2, 3, 5, H, W]
 
 
 # ── Val split ──────────────────────────────────────────────────────────────
@@ -242,12 +228,15 @@ def main(args):
 
             act_raw = np.asarray(df[_ACT_KEY].iloc[start_t + d], dtype=np.float32)
             d_norm = float(d) / float(_MAX_DELAY - 1)
-            action = torch.from_numpy(np.concatenate([act_raw, [d_norm]])).unsqueeze(0).float()
+            action = (
+                torch.from_numpy(np.concatenate([act_raw, [d_norm]])).float()
+                .unsqueeze(0).repeat(2, 1).unsqueeze(1)
+            )  # [2, 1, 8]
 
             print(f"  d={d}: 推理 ({args.num_steps} steps) …", end="", flush=True)
             with torch.no_grad():
                 video_out = wm.generate_vid2world(
-                    prompt=prompt,
+                    prompt=[prompt, prompt],
                     input_path=vid_input,
                     action=action,
                     guidance=args.guidance,
@@ -258,31 +247,37 @@ def main(args):
                     num_steps=args.num_steps,
                 )
             print(" 完成")
-            # video_out: [1, 3, 17, 256, 256], float [-1, 1]
+            # video_out: [2, 3, 5, 256, 256], float [-1, 1]
 
-            # ── 直接提取 17 帧原始输出 ────────────────────────────────────
-            raw_frames = video_tensor_to_frames(video_out)  # 17 × (H,W,3) uint8
-
-            out_frames = raw_frames  # 直接用原始帧序列
+            # 分别提取 cam1 与 cam2 的 5 帧序列，再横向拼接便于对比观察
+            cam1_frames = video_tensor_to_frames(video_out, batch_idx=0)
+            cam2_frames = video_tensor_to_frames(video_out, batch_idx=1)
+            raw_frames = [np.hstack([f1, f2]) for f1, f2 in zip(cam1_frames, cam2_frames)]
+            out_frames = raw_frames
 
             if args.with_gt:
-                # 在每帧右侧拼接对应 GT 帧（pad 黑色用于无对应的帧）
-                # 17-frame layout: frames 1-4=cam1_t, 5-8=cam2_t, 9-12=cam1_pred, 13-16=cam2_pred
+                # 在每帧右侧拼接对应 GT（左:pred 双视角拼接, 右:gt 双视角拼接）
                 gt_map = {
-                    1:  decode_image(df[_CAM1_KEY].iloc[start_t]),   # frames 1-4: cam1_t
-                    5:  decode_image(df[_CAM2_KEY].iloc[start_t]),   # frames 5-8: cam2_t
-                    9:  decode_image(df[_CAM1_KEY].iloc[pred_t]),    # frames 9-12: cam1 GT
-                    13: decode_image(df[_CAM2_KEY].iloc[pred_t]),    # frames 13-16: cam2 GT
+                    0: (
+                        decode_image(df[_CAM1_KEY].iloc[start_t]),
+                        decode_image(df[_CAM2_KEY].iloc[start_t]),
+                    ),
+                    1: (
+                        decode_image(df[_CAM1_KEY].iloc[pred_t]),
+                        decode_image(df[_CAM2_KEY].iloc[pred_t]),
+                    ),
                 }
-                # Map to per-frame GT (repeated ×4 for each latent group)
-                per_frame_gt = {i: gt_map[1]  for i in range(1,  5)}
-                per_frame_gt.update({i: gt_map[5]  for i in range(5,  9)})
-                per_frame_gt.update({i: gt_map[9]  for i in range(9,  13)})
-                per_frame_gt.update({i: gt_map[13] for i in range(13, 17)})
-                H, W = raw_frames[0].shape[:2]
-                black = np.zeros((H, W, 3), dtype=np.uint8)
+                per_frame_gt = {0: gt_map[0]}
+                per_frame_gt.update({i: gt_map[1] for i in range(1, 5)})
+                H, W = cam1_frames[0].shape[:2]
+                black = (np.zeros((H, W, 3), dtype=np.uint8), np.zeros((H, W, 3), dtype=np.uint8))
                 out_frames = [
-                    np.hstack([raw_frames[i], per_frame_gt.get(i, black)])
+                    np.hstack(
+                        [
+                            raw_frames[i],
+                            np.hstack(list(per_frame_gt.get(i, black))),
+                        ]
+                    )
                     for i in range(len(raw_frames))
                 ]
 
@@ -308,7 +303,7 @@ def main(args):
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="保存 WM 原始 17 帧输出视频",
+        description="保存 WM 原始 paired 5 帧输出视频",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--ckpt", type=pathlib.Path, required=True,
@@ -339,7 +334,7 @@ def parse_args():
                    help="CFG guidance 强度（0=纯条件推理，~2× 加速；>0 启用 CFG）")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--with-gt", action="store_true",
-                   help="在视频右侧拼接对应 GT 帧（frame1/5/9/13）")
+                   help="在视频右侧拼接对应 GT 帧（frame0=当前, frame1-4=未来）")
     return p.parse_args()
 
 

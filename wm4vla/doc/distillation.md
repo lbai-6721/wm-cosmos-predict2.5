@@ -21,7 +21,7 @@ Teacher 网络在整个蒸馏过程中保持冻结。
 export HF_ENDPOINT=https://hf-mirror.com
 
 # 所有训练输出的根目录
-export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_v3
+export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_v3_light
 
 # LIBERO 数据路径（若做 LIBERO 蒸馏）
 export LEROBOT_LIBERO_DATA_ROOT=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/lerobot/lerobot--libero_10_image@v2.0
@@ -52,12 +52,25 @@ python scripts/convert_distcp_to_pt.py \
 
 | 配置项 | 原因 | 必须设置 |
 |--------|------|---------|
-| `tokenizer="wan2pt2_tokenizer"` | wm4vla 训练用 wan2pt2 VAE | ✅ 必须 override |
+| `tokenizer="wan2pt1_tokenizer"` | wm4vla teacher 训练用 wan2pt1 VAE（DEFAULT_CHECKPOINT 中会将 wan2pt2 覆盖为 wan2pt1） | ✅ 必须 override |
 | `multiply_noise_by_video_len=False` | wm4vla 训练 `adjust_video_noise=False`，噪声乘数为 1.0 | ✅ 必须 override |
-| `use_clean_cond_timesteps=False` | wm4vla 训练 `conditional_frame_timestep=-1.0`，不对条件帧调整 timestep | ✅ 必须 override |
+| `use_clean_cond_timesteps` | 取决于 teacher 训练时的 `conditional_frame_timestep`：`-1.0` → `False`；`0.1`（wm-output 原始 teacher）→ `True` | ✅ 必须与 teacher 匹配 |
 | `teacher_guidance=0` | Teacher 纯条件训练，无 CFG，节省显存 | ✅ 必须 |
 | `text_encoder_config=None` | 使用数据中预计算的 T5 embedding | ✅ 必须 |
 | `fsdp_shard_size=4` | 4-GPU 单节点 | ✅ 必须 |
+| 采样器按整批更新 latent | paired 方案下 `B=2` 表示两个视角；若只更新 `latents[0]`，会导致 `cam2` 输出异常 | ✅ 必须 |
+
+### B=2 paired 采样修复
+
+paired 5 帧方案下，蒸馏评估/推理同样依赖底层采样器对整个 batch 做 step 更新。  
+`wm-cosmos-predict2.5` 已修复以下文件中的单样本采样路径（`latents[0]`）：
+
+- `cosmos_predict2/_src/predict2/models/text2world_model.py`
+- `cosmos_predict2/_src/predict2/models/text2world_wan2pt1_model.py`
+- `cosmos_predict2/_src/predict2/models/text2world_model_rectified_flow.py`
+- `cosmos_predict2/_src/predict2/models/interpolator_model_rectified_flow.py`
+
+修复后统一为 batch 级 step 更新，保证 `video_out[0]` 与 `video_out[1]` 分别对应 `cam1/cam2` 的独立预测语义。
 
 ## 蒸馏实验配置
 
@@ -65,13 +78,13 @@ python scripts/convert_distcp_to_pt.py \
 
 目前已注册以下实验：
 
-### LIBERO task0（256×256，17 帧，state_t=5）
+### LIBERO task0（256×256，paired 5 帧，state_t=2）
 
 ```
 实验名：dmd2_trigflow_distill_wm_libero_lerobot_256_task0
 Teacher：iter_000008000/model_ema_bf16.pt（task0 任务）
 数据：lerobot_libero_dual_cam_256_task0_train
-条件帧：3 帧（blank + cam1_t + cam2_t）
+条件帧：1 帧（每个 paired 视角样本各自的 view_t）
 action_dim：8
 ```
 
@@ -94,7 +107,7 @@ action_dim：7
 ```bash
 cd /home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5
 
-CUDA_VISIBLE_DEVICES=2,3,4,5 torchrun \
+CUDA_VISIBLE_DEVICES=0,2,3,4 torchrun \
   --nproc_per_node=4 \
   --master_port=12340 \
   -m scripts.train \
@@ -102,6 +115,7 @@ CUDA_VISIBLE_DEVICES=2,3,4,5 torchrun \
   -- experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 \
   job.wandb_mode=disabled
 ```
+  dataloader_train.batch_size=4 \
 
 **Kinetix（4 GPU）：**
 
@@ -130,7 +144,7 @@ ${IMAGINAIRE_OUTPUT_ROOT}/cosmos3_interactive/<experiment_name>/checkpoints/iter
 ```bash
 CHECKPOINTS_DIR=${IMAGINAIRE_OUTPUT_ROOT}/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
 
-CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_v3/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
+CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5-new/output/wm-distill-output/distill_v3_op/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
 CHECKPOINT_ITER=$(cat ${CHECKPOINTS_DIR}/latest_checkpoint.txt)
 
 python scripts/convert_distcp_to_pt.py \
@@ -146,7 +160,7 @@ python scripts/convert_distcp_to_pt.py \
 蒸馏训练完成后，先将 DCP 目录转换为 `.pt` 文件：
 
 ```bash
-CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_v3/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
+CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5-new/output/wm-distill-output/distill_v3_op/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
 CHECKPOINT_ITER=$(cat ${CHECKPOINTS_DIR}/latest_checkpoint.txt)
 
 CUDA_VISIBLE_DEVICES=7 python scripts/convert_distcp_to_pt.py \
@@ -167,7 +181,7 @@ cd /home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5
 CUDA_VISIBLE_DEVICES=7 python wm4vla/scripts/eval_distilled_world_model.py \
     --ckpt ${CHECKPOINTS_DIR}/${CHECKPOINT_ITER}/model_ema_bf16.pt \
     --task-indices 0 \
-    --num-steps 4 \
+    --num-steps 1 \
     --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
     --samples-per-episode 5 \
     --output outputs/eval_distill/task0_step1_quick.json
@@ -192,8 +206,16 @@ CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
     --task-indices 0 \
     --num-steps 1 \
     --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
-    --save-images outputs/eval_distill/images_step1 \
-    --output outputs/eval_distill/task0_step1.json
+    --save-images outputs/eval_distill/images_step1_nn \
+    --output outputs/eval_distill/task0_step1_nn.json
+
+CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
+    --ckpt /home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_v3/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints/iter_000011000/model_ema_bf16.pt \
+    --task-indices 0 \
+    --num-steps 1 \
+    --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
+    --save-images outputs/eval_distill/images_step1_test_time \
+    --output outputs/eval_distill/task0_step1_test_time.json
 ```
 
 ### 输出结果格式

@@ -22,7 +22,7 @@ LIBERO : (o_t, task, a_{t+d}, d) -> o_{t+d+1}
 |---|---|---|
 | 文本条件 | 无（零向量占位） | 有（T5-11B 预计算嵌入） |
 | `t5_text_embeddings` | `zeros(512,1024)` | `t5_embeddings.pkl` 查表 |
-| 视频布局 | 9 帧（`state_t=3`） | 17 帧（`state_t=5`） |
+| 视频布局 | 9 帧（`state_t=3`） | 5 帧（`state_t=2`，paired 双视角 batch） |
 | 分辨率 | 128x128 | 256x256 |
 | `action_dim` | 7（6+delay） | 8（7+delay） |
 
@@ -40,7 +40,7 @@ LIBERO : (o_t, task, a_{t+d}, d) -> o_{t+d+1}
 | 文件 | 说明 |
 |---|---|
 | `wm4vla/datasets/dataset_kinetix.py` | Kinetix 9 帧数据集 |
-| `wm4vla/datasets/dataset_lerobot_libero.py` | LIBERO LeRobot 17 帧数据集（含文本） |
+| `wm4vla/datasets/dataset_lerobot_libero.py` | LIBERO LeRobot paired 5 帧数据集（含文本） |
 | `wm4vla/configs/data_registry.py` | dataloader 注册（全量/task0/task01） |
 | `wm4vla/configs/experiments.py` | 实验配置注册 |
 | `cosmos_predict2/_src/predict2/action/configs/action_conditioned/conditioner.py` | 纯条件训练配置（dropout=0） |
@@ -94,15 +94,16 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 --master_port=12341 -m 
 /home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/lerobot/lerobot--libero_spatial_image@v2.0
 ```
 
-17 帧布局（`state_t=5`）：
+paired 5 帧布局（`state_t=2`）：
 
-| 帧索引 | 内容 |
+| batch / 帧索引 | 内容 |
 |---|---|
-| 0 | blank |
-| 1-4 | `cam1_t x4` |
-| 5-8 | `cam2_t x4` |
-| 9-12 | `cam1_{t+d+1} x4`（评估取 frame 9） |
-| 13-16 | `cam2_{t+d+1} x4`（评估取 frame 13） |
+| batch0 / 0 | `cam1_t` |
+| batch0 / 1-4 | `cam1_{t+d+1} x4`（评估取 frame 1） |
+| batch1 / 0 | `cam2_t` |
+| batch1 / 1-4 | `cam2_{t+d+1} x4`（评估取 frame 1） |
+
+说明：`dataset_lerobot_libero.py` 返回 `video: [2, 3, 5, 256, 256]`、`action: [2, 1, 8]`、`t5_text_embeddings: [2, 512, 1024]`，两个视角在 batch 维强配对。
 
 ### 4.2 预计算文本嵌入（一次性）
 
@@ -195,11 +196,33 @@ python scripts/visualize_wm.py \
 
 ## 7. 与 wm4vla eval 对接
 
-模型输出 `video_out: [1, 3, 17, 256, 256]`（值域 `[-1,1]`）时：
+模型输出 `video_out: [2, 3, 5, 256, 256]`（值域 `[-1,1]`）时：
 
 ```python
-cam1_pred = video_out[0, :, 9]
-cam2_pred = video_out[0, :, 13]
+cam1_pred = video_out[0, :, 1]
+cam2_pred = video_out[1, :, 1]
 obs["observation.images.image"] = cam1_pred
 obs["observation.images.wrist_image"] = cam2_pred
 ```
+
+## 8. B=2 推理采样注意事项
+
+在 paired-view 5 帧方案中，`cam1/cam2` 不是拼在同一个时间轴，而是作为强配对 batch 输入 WM：
+
+- `video[0]` 对应 `cam1`
+- `video[1]` 对应 `cam2`
+
+因此推理采样必须按整批 `B=2` 一起更新 latent。若采样器错误地只更新 `latents[0]`，会出现：
+
+- `cam1_pred` 看起来正常
+- `cam2_pred` 异常接近 `cam1_pred`
+- 容易误判为取帧索引或列名错误
+
+`wm-cosmos-predict2.5` 已完成此修复，采样 step 统一改为 batch 级更新（不再使用 `latents[0]` 路径）：
+
+- `cosmos_predict2/_src/predict2/models/text2world_model.py`
+- `cosmos_predict2/_src/predict2/models/text2world_wan2pt1_model.py`
+- `cosmos_predict2/_src/predict2/models/text2world_model_rectified_flow.py`
+- `cosmos_predict2/_src/predict2/models/interpolator_model_rectified_flow.py`
+
+这属于**推理路径修复**，不是训练目标变更。若 checkpoint 本身已按 paired 5 帧语义训练，通常不需要仅因该 bug 重训。

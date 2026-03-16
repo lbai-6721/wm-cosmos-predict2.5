@@ -8,6 +8,7 @@ import os
 
 from hydra.core.config_store import ConfigStore
 from megatron.core import parallel_state
+import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
 from cosmos_predict2._src.imaginaire.lazy_config import LazyCall as L
@@ -24,6 +25,52 @@ def _get_sampler(dataset):
         shuffle=True,
         seed=0,
     )
+
+
+def _collate_paired_view_batch(batch):
+    """Flatten dataset-produced paired view samples into one training batch.
+
+    Each dataset item already contains a strong paired mini-batch with shape:
+      video: [2, 3, 5, H, W]
+      action: [2, 1, 8]
+      ...
+
+    When DataLoader batch_size = N, `batch` is a list of N such dicts.
+    This collate function concatenates along the leading paired-view dimension
+    so the trainer receives standard tensors:
+      video: [2N, 3, 5, H, W]
+      action: [2N, 1, 8]
+    """
+    assert len(batch) > 0, "Empty batch is not allowed"
+
+    collated = {}
+    tensor_cat_keys = {
+        "video",
+        "action",
+        "fps",
+        "image_size",
+        "padding_mask",
+        "t5_text_embeddings",
+    }
+
+    for key in batch[0].keys():
+        values = [item[key] for item in batch]
+        if key == "__key__":
+            flat_keys = []
+            for value in values:
+                if isinstance(value, list):
+                    flat_keys.extend(value)
+                else:
+                    flat_keys.append(value)
+            collated[key] = flat_keys
+        elif key in tensor_cat_keys:
+            collated[key] = torch.cat(values, dim=0)
+        elif key == "num_frames":
+            collated[key] = values[0]
+        else:
+            collated[key] = values
+
+    return collated
 
 
 def register_wm4vla_data():
@@ -86,7 +133,7 @@ def register_wm4vla_data():
         ),
     )
 
-    # ── LIBERO LeRobot dual-camera (256×256, state_t=5) ─────────────────────
+    # ── LIBERO LeRobot paired-view short-video (256×256, state_t=2) ─────────
     _lerobot_libero_data_root = os.environ.get(
         "LEROBOT_LIBERO_DATA_ROOT",
         "/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/lerobot"
@@ -110,11 +157,13 @@ def register_wm4vla_data():
             dataset=train_ds,
             sampler=L(_get_sampler)(dataset=train_ds),
             batch_size=1, drop_last=True,
+            collate_fn=_collate_paired_view_batch,
         )
         val_dl = L(DataLoader)(
             dataset=val_ds,
             sampler=L(_get_sampler)(dataset=val_ds),
             batch_size=1, drop_last=True,
+            collate_fn=_collate_paired_view_batch,
         )
         return train_dl, val_dl
 

@@ -26,3 +26,15 @@ policy不需要根据wm4vla架构进行后训练
 model: flow policy; 仿真环境：kinetix
 
 在/home/kyji/storage_net/tmp/lbai/real-time-chunking-kinetix的基础上，改成我们的wm4vla：即使用world model生成观测值，传入vla的模型，其他实验设置保持一致。
+
+
+## 实现说明
+目前teacher模型在cosmos-predict2.5目录下训练，
+而蒸馏步骤在wm-cosmos-predict2.5目录下进行训练，
+
+需要teacher部分时参考cosmos-predict2.5目录
+
+## world model
+不使用视频格式，只需要生成未来图片
+传入condition imgage，生成future iamge 
+lerobot-libero有两个视角的图片，组成一个Batch，这样就能同时生成两个视角的图片了

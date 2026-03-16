@@ -11,12 +11,13 @@
   - 指标：PSNR、SSIM（cam1 + cam2 分别统计，再求平均）
   - 可选：LPIPS（需要 pip install lpips）
 
-视频帧布局（17 帧，state_t=5）：
-  Frame 0      : zeros            ← 空白锚帧
-  Frames 1–4   : cam1_t ×4       ← conditioning latent 1（第三视角）
-  Frames 5–8   : cam2_t ×4       ← conditioning latent 2（腕部）
-  Frames 9–12  : zeros           ← 待预测 cam1（latent 3）
-  Frames 13–16 : zeros           ← 待预测 cam2（latent 4）
+视频帧布局（强配对 batch，5 帧，state_t=2）：
+  Batch 0:
+    Frame 0    : cam1_t          ← conditioning latent 0（第三视角）
+    Frames 1–4 : zeros           ← 待预测 cam1（latent 1）
+  Batch 1:
+    Frame 0    : cam2_t          ← conditioning latent 0（腕部）
+    Frames 1–4 : zeros           ← 待预测 cam2（latent 1）
 
 文本条件：使用 tasks.jsonl 中的真实任务描述。
   若提供 --t5-emb-path，直接使用预计算嵌入（避免在线加载 T5-11B）；
@@ -33,14 +34,14 @@
       [--samples-per-episode 20] \\
       [--output outputs/eval_wm/task0.json]
 
-CUDA_VISIBLE_DEVICES=7 python scripts/eval_world_model.py \
-    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5-new/output/reconstruct_new/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt \
+CUDA_VISIBLE_DEVICES=0 python scripts/eval_world_model.py \
+    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt \
     --task-indices 0 \
     --experiment ac_libero_lerobot_256_pixels_2b_task0 \
     --t5-emb-path /home/kyji/public/dataset/lerobot/lerobot--libero_10_image@v2.0/meta/t5_embeddings.pkl \
-    --num-steps 4 \
-    --save-images outputs/eval_wm_test/test_time_new/test_4_new/libero-10_task0_images \
-    --output outputs/eval_wm_test/test_time_new/test_4_new/libero-10_task0.json
+    --num-steps 35 \
+    --save-images outputs/eval_wm_test/test_time_new/test_35_nc_op/libero-10_task0_images \
+    --output outputs/eval_wm_test/test_time_new/test_35_nc_op/libero-10_task0.json
 
   # 评估全部 10 个任务
   python scripts/eval_world_model.py \\
@@ -112,8 +113,8 @@ _EXPERIMENT_NAME_FULL   = "ac_libero_lerobot_256_pixels_2b"
 _EXPERIMENT_NAME_TASK0  = "ac_libero_lerobot_256_pixels_2b_task0"
 _EXPERIMENT_NAME_TASK01 = "ac_libero_lerobot_256_pixels_2b_task01"
 _CONFIG_FILE      = "cosmos_predict2/_src/predict2/action/configs/action_conditioned/config.py"
-_NUM_LATENT_COND  = 3    # state_t=5 → 3 conditioning latent frames
-_NUM_VIDEO_FRAMES = 17   # 1 + (5-1)×4 = 17 pixel frames
+_NUM_LATENT_COND  = 1    # state_t=2 → 1 conditioning latent frame
+_NUM_VIDEO_FRAMES = 5    # 1 + (2-1)×4 = 5 pixel frames
 _RESOLUTION       = "256,256"
 _MAX_DELAY        = 5    # d ∈ [0, max_delay-1] during training
 
@@ -283,48 +284,33 @@ def build_val_episode_samples(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 构建 WM 输入视频张量（17 帧布局，state_t=5）
+# 构建 WM 输入视频张量（强配对 batch，5 帧布局，state_t=2）
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_input_video(cam1_t: np.ndarray, cam2_t: np.ndarray) -> torch.Tensor:
     """
-    构建 WM 输入的 17 帧视频张量（uint8，值域 [0, 255]）。
+    构建 WM 输入的强配对 5 帧视频张量（uint8，值域 [0, 255]）。
 
-    帧布局（与 dataset_lerobot_libero.py 完全一致，state_t=5）：
-      Frame 0      : zeros     ← 空白锚帧（latent 0）
-      Frames 1–4   : cam1_t×4  ← conditioning latent 1（第三视角当前帧）
-      Frames 5–8   : cam2_t×4  ← conditioning latent 2（腕部当前帧）
-      Frames 9–12  : zeros     ← 待预测 cam1_{t+d+1}（latent 3）
-      Frames 13–16 : zeros     ← 待预测 cam2_{t+d+1}（latent 4）
+    帧布局（与 dataset_lerobot_libero.py 完全一致，state_t=2）：
+      Batch 0:
+        Frame 0    : cam1_t    ← conditioning latent 0
+        Frames 1–4 : zeros     ← 待预测 cam1_{t+d+1}（latent 1）
+      Batch 1:
+        Frame 0    : cam2_t    ← conditioning latent 0
+        Frames 1–4 : zeros     ← 待预测 cam2_{t+d+1}（latent 1）
 
     Returns:
-        [1, 3, 17, H, W] uint8 tensor（CPU）
+        [2, 3, 5, H, W] uint8 tensor（CPU）
     """
     H, W = cam1_t.shape[:2]
     blank = np.zeros((H, W, 3), dtype=np.uint8)
 
-    frames = np.stack([
-        blank,    # 0  : 空白锚帧
-        cam1_t,   # 1  : conditioning cam1
-        cam1_t,   # 2
-        cam1_t,   # 3
-        cam1_t,   # 4
-        cam2_t,   # 5  : conditioning cam2
-        cam2_t,   # 6
-        cam2_t,   # 7
-        cam2_t,   # 8
-        blank,    # 9  : 待预测 cam1
-        blank,    # 10
-        blank,    # 11
-        blank,    # 12
-        blank,    # 13 : 待预测 cam2
-        blank,    # 14
-        blank,    # 15
-        blank,    # 16
-    ], axis=0)  # [17, H, W, 3]
+    cam1_frames = np.stack([cam1_t, blank, blank, blank, blank], axis=0)
+    cam2_frames = np.stack([cam2_t, blank, blank, blank, blank], axis=0)
+    paired_frames = np.stack([cam1_frames, cam2_frames], axis=0)  # [2, 5, H, W, 3]
 
-    # → [1, 3, 17, H, W] uint8
-    video = torch.from_numpy(frames).permute(3, 0, 1, 2).unsqueeze(0)
+    # → [2, 3, 5, H, W] uint8
+    video = torch.from_numpy(paired_frames).permute(0, 4, 1, 2, 3)
     return video
 
 
@@ -408,13 +394,14 @@ def evaluate(args):
             def encode_prompts(self, prompts, max_length=512, return_mask=False):
                 if isinstance(prompts, str):
                     prompts = [prompts]
-                key = prompts[0]
-                if key not in self._cache:
-                    # 缓存未命中（通常是 negative prompt）：返回零张量。
-                    # guidance=0.0 时负向嵌入不参与计算，零值安全。
-                    emb = torch.zeros(1, max_length, 1024, dtype=torch.float32, device="cuda")
-                else:
-                    emb = self._cache[key].to("cuda")  # (1, 512, 1024)
+                embeddings = []
+                for key in prompts:
+                    if key not in self._cache:
+                        emb = torch.zeros(1, max_length, 1024, dtype=torch.float32, device="cuda")
+                    else:
+                        emb = self._cache[key].to("cuda")
+                    embeddings.append(emb.squeeze(0))
+                emb = torch.stack(embeddings, dim=0)
                 if return_mask:
                     mask = torch.ones(emb.shape[:2], dtype=torch.bool, device="cuda")
                     return emb, mask
@@ -513,8 +500,8 @@ def evaluate(args):
                 # action: a_{t+d}，shape [7]
                 act_raw = np.asarray(df[_ACT_KEY].iloc[start_t + d], dtype=np.float32)
                 d_norm = float(d) / float(_MAX_DELAY - 1)  # d/(max_delay-1) = d/4
-                action_vec = np.concatenate([act_raw, [d_norm]])          # [8]
-                action = torch.from_numpy(action_vec).unsqueeze(0).float()  # [1, 8]
+                action_vec = np.concatenate([act_raw, [d_norm]])            # [8]
+                action = torch.from_numpy(action_vec).float().unsqueeze(0).repeat(2, 1).unsqueeze(1)  # [2, 1, 8]
 
                 # ── WM 推理 ─────────────────────────────────────────────
                 # generate_vid2world 内部：text_encoder_config=None 时调用
@@ -522,7 +509,7 @@ def evaluate(args):
                 time_video_start = time.time()
                 with torch.no_grad():
                     video_out = wm.generate_vid2world(
-                        prompt=prompt,
+                        prompt=[prompt, prompt],
                         input_path=vid_input,
                         action=action,
                         guidance=args.guidance,
@@ -532,15 +519,15 @@ def evaluate(args):
                         seed=args.seed,
                         num_steps=args.num_steps,
                     )
-                # video_out: [1, 3, 17, 256, 256]，值域 [-1, 1]
+                # video_out: [2, 3, 5, 256, 256]，值域 [-1, 1]
                 time_video_end = time.time()
                 print(f"Time taken for video generation: {time_video_end - time_video_start} seconds")
                 # ── 提取预测帧 ──────────────────────────────────────────
-                # 17-frame layout (state_t=5, 3 cond latents):
-                # Latent 3 → pixel frames 9-12   (cam1_{t+d+1} × 4)
-                # Latent 4 → pixel frames 13-16  (cam2_{t+d+1} × 4)
-                cam1_pred_t = _tensor_to_uint8(video_out[0, :, 9])    # (H, W, 3)
-                cam2_pred_t = _tensor_to_uint8(video_out[0, :, 13])
+                # 5-frame paired layout (state_t=2, 1 cond latent):
+                # Batch 0 → cam1, frame 1 is the first predicted pixel frame
+                # Batch 1 → cam2, frame 1 is the first predicted pixel frame
+                cam1_pred_t = _tensor_to_uint8(video_out[0, :, 1])    # (H, W, 3)
+                cam2_pred_t = _tensor_to_uint8(video_out[1, :, 1])
 
                 # ── 计算指标 ────────────────────────────────────────────
                 psnr1 = compute_psnr(cam1_pred_t, cam1_gt)
@@ -560,8 +547,8 @@ def evaluate(args):
                 if lpips_fn is not None:
                     with torch.no_grad():
                         # LPIPS 输入：[-1, 1] float，(1, 3, H, W)
-                        t1_pred = video_out[0:1, :, 9].float()
-                        t2_pred = video_out[0:1, :, 13].float()
+                        t1_pred = video_out[0:1, :, 1].float()
+                        t2_pred = video_out[1:2, :, 1].float()
                         t1_gt = (torch.from_numpy(cam1_gt).float() / 127.5 - 1).permute(2, 0, 1).unsqueeze(0).cuda()
                         t2_gt = (torch.from_numpy(cam2_gt).float() / 127.5 - 1).permute(2, 0, 1).unsqueeze(0).cuda()
                         lp1 = float(lpips_fn(t1_pred, t1_gt).item())
@@ -706,7 +693,7 @@ def evaluate(args):
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Offline eval of Libero-Spatial World Model (skip-dynamics, 17-frame layout)",
+        description="Offline eval of Libero-Spatial World Model (skip-dynamics, paired 5-frame layout)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(

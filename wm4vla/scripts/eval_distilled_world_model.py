@@ -10,12 +10,13 @@
   - 不需要 CFG（蒸馏模型 teacher_guidance=0）
   - 指标：PSNR、SSIM（cam1 + cam2）、可选 LPIPS
 
-视频帧布局（17 帧，state_t=5）：
-  Frame 0      : zeros            ← 空白锚帧
-  Frames 1–4   : cam1_t ×4       ← conditioning latent 1（第三视角）
-  Frames 5–8   : cam2_t ×4       ← conditioning latent 2（腕部）
-  Frames 9–12  : zeros           ← 待预测 cam1（latent 3）
-  Frames 13–16 : zeros           ← 待预测 cam2（latent 4）
+视频帧布局（strong paired batch，5 帧，state_t=2）：
+  Batch 0:
+    Frame 0    : cam1_t          ← conditioning latent 0（第三视角）
+    Frames 1–4 : zeros           ← 待预测 cam1（latent 1）
+  Batch 1:
+    Frame 0    : cam2_t          ← conditioning latent 0（腕部）
+    Frames 1–4 : zeros           ← 待预测 cam2（latent 1）
 
 用法示例：
 
@@ -89,8 +90,8 @@ _DEFAULT_DATA_ROOT = (
 _DISTILL_EXPERIMENT_NAME = "dmd2_trigflow_distill_wm_libero_lerobot_256_task0"
 _DISTILL_CONFIG_FILE = "cosmos_predict2/_src/interactive/configs/registry_predict2p5.py"
 
-_NUM_LATENT_COND  = 3    # state_t=5 → 3 conditioning latent frames
-_NUM_VIDEO_FRAMES = 17   # 1 + (5-1)×4 = 17 pixel frames
+_NUM_LATENT_COND  = 1    # state_t=2 → 1 conditioning latent frames
+_NUM_VIDEO_FRAMES = 5    # 1 + (2-1)×4 = 5 pixel frames
 _RESOLUTION       = "256,256"
 _MAX_DELAY        = 5    # d ∈ [0, max_delay-1] during training
 
@@ -298,42 +299,27 @@ def build_val_episode_samples(
 
 def build_input_video(cam1_t: np.ndarray, cam2_t: np.ndarray) -> torch.Tensor:
     """
-    构建 WM 输入的 17 帧视频张量（uint8）。
+    构建 WM 输入的 paired 5 帧视频张量（uint8）。
 
-    帧布局（state_t=5）：
-      Frame 0      : zeros
-      Frames 1–4   : cam1_t × 4
-      Frames 5–8   : cam2_t × 4
-      Frames 9–12  : zeros  ← 待预测 cam1
-      Frames 13–16 : zeros  ← 待预测 cam2
+    帧布局（state_t=2）：
+      Batch 0:
+        Frame 0    : cam1_t
+        Frames 1–4 : zeros（待预测 cam1）
+      Batch 1:
+        Frame 0    : cam2_t
+        Frames 1–4 : zeros（待预测 cam2）
 
     Returns:
-        [1, 3, 17, H, W] uint8 tensor（CPU）
+        [2, 3, 5, H, W] uint8 tensor（CPU）
     """
     H, W = cam1_t.shape[:2]
     blank = np.zeros((H, W, 3), dtype=np.uint8)
 
-    frames = np.stack([
-        blank,   # 0
-        cam1_t,  # 1
-        cam1_t,  # 2
-        cam1_t,  # 3
-        cam1_t,  # 4
-        cam2_t,  # 5
-        cam2_t,  # 6
-        cam2_t,  # 7
-        cam2_t,  # 8
-        blank,   # 9  ← 待预测 cam1
-        blank,   # 10
-        blank,   # 11
-        blank,   # 12
-        blank,   # 13 ← 待预测 cam2
-        blank,   # 14
-        blank,   # 15
-        blank,   # 16
-    ], axis=0)  # [17, H, W, 3]
+    cam1_frames = np.stack([cam1_t, blank, blank, blank, blank], axis=0)
+    cam2_frames = np.stack([cam2_t, blank, blank, blank, blank], axis=0)
+    paired_frames = np.stack([cam1_frames, cam2_frames], axis=0)  # [2, 5, H, W, 3]
 
-    video = torch.from_numpy(frames).permute(3, 0, 1, 2).unsqueeze(0)  # [1, 3, 17, H, W]
+    video = torch.from_numpy(paired_frames).permute(0, 4, 1, 2, 3)  # [2, 3, 5, H, W]
     return video
 
 
@@ -350,9 +336,9 @@ def build_data_batch(
     构建蒸馏模型推理所需的 data_batch。
 
     Args:
-        vid_input: [1, 3, 17, H, W] uint8 CPU tensor
-        t5_emb:    [1, 512, 1024] float32 T5 embedding（或零张量）
-        action:    [1, action_dim] float32 action vector
+        vid_input: [2, 3, 5, H, W] uint8 CPU tensor
+        t5_emb:    [2, 512, 1024] float32 T5 embedding（或零张量）
+        action:    [2, 1, action_dim] float32 action vector
 
     Returns:
         dict: 所有 tensor 已移至 CUDA + bfloat16（浮点部分）
@@ -360,7 +346,7 @@ def build_data_batch(
     B, C, T, H, W = vid_input.shape
     data_batch = {
         "dataset_name": "video_data",
-        "video": vid_input.cuda(),            # must stay uint8; model normalizes internally
+            "video": vid_input.cuda(),            # must stay uint8; model normalizes internally
         "fps": torch.tensor([24.0] * B),      # converted to bf16 below
         "padding_mask": torch.zeros(B, 1, H, W),  # concat_padding_mask=True → must be bf16
         "num_conditional_frames": _NUM_LATENT_COND,
@@ -421,10 +407,10 @@ def evaluate(args):
             emb = t5_cache[prompt]
             if emb.dim() == 2:
                 emb = emb.unsqueeze(0)  # [512, 1024] → [1, 512, 1024]
-            return emb
+            return emb.repeat(2, 1, 1)
         # 缓存未命中：使用零向量（action-conditioned 蒸馏模型不依赖文本引导）
         print(f"[warn] T5 cache miss for prompt: '{prompt[:50]}…'. Using zeros.")
-        return torch.zeros(1, 512, 1024, dtype=torch.float32)
+        return torch.zeros(2, 512, 1024, dtype=torch.float32)
 
     # ── 4. 构建 val 数据集采样表 ────────────────────────────────────────────
     episode_samples = build_val_episode_samples(
@@ -484,7 +470,7 @@ def evaluate(args):
             cam1_t = _decode_image(df[_CAM1_KEY].iloc[start_t])
             cam2_t = _decode_image(df[_CAM2_KEY].iloc[start_t])
 
-            vid_input = build_input_video(cam1_t, cam2_t)   # [1, 3, 17, H, W]
+            vid_input = build_input_video(cam1_t, cam2_t)   # [2, 3, 5, H, W]
 
             for d in delays:
                 pred_t = start_t + d + 1
@@ -499,7 +485,7 @@ def evaluate(args):
                 d_norm = float(d) / float(_MAX_DELAY - 1)
                 action_vec = np.concatenate([act_raw, [d_norm]])
                 # network expects [B, T, D]；num_action_per_chunk=1 → T=1
-                action = torch.from_numpy(action_vec).unsqueeze(0).unsqueeze(0).float()  # [1, 1, 8]
+                action = torch.from_numpy(action_vec).float().unsqueeze(0).repeat(2, 1).unsqueeze(1)  # [2, 1, 8]
 
                 data_batch = build_data_batch(vid_input, t5_emb, action)
 
@@ -517,14 +503,14 @@ def evaluate(args):
                         time_inference_end = time.time()
                         print(f"Time taken for inference: {time_inference_end - time_inference_start} seconds")
                         time_decode_start = time.time()
-                        video_out = model.decode(latents)  # [-1, 1], [1, 3, 17, H, W]
+                        video_out = model.decode(latents)  # [-1, 1], [2, 3, 5, H, W]
                         time_decode_end = time.time()
                         print(f"Time taken for decode: {time_decode_end - time_decode_start} seconds")
                     elapsed_ms = (time.time() - time_start) * 1000
                     print(f"Time taken for total: {time.time() - time_start} seconds")
-                    # 提取预测帧（同 eval_world_model.py）
-                    cam1_pred = _tensor_to_uint8(video_out[0, :, 9])   # latent 3 → frame 9
-                    cam2_pred = _tensor_to_uint8(video_out[0, :, 13])  # latent 4 → frame 13
+                    # 提取预测帧（paired 5-frame）
+                    cam1_pred = _tensor_to_uint8(video_out[0, :, 1])   # batch0 frame1
+                    cam2_pred = _tensor_to_uint8(video_out[1, :, 1])   # batch1 frame1
 
                     # 指标
                     psnr1 = compute_psnr(cam1_pred, cam1_gt)
@@ -544,8 +530,8 @@ def evaluate(args):
 
                     if lpips_fn is not None:
                         with torch.no_grad():
-                            t1_pred = video_out[0:1, :, 9].float()
-                            t2_pred = video_out[0:1, :, 13].float()
+                            t1_pred = video_out[0:1, :, 1].float()
+                            t2_pred = video_out[1:2, :, 1].float()
                             t1_gt = (
                                 torch.from_numpy(cam1_gt).float() / 127.5 - 1
                             ).permute(2, 0, 1).unsqueeze(0).cuda()
@@ -708,7 +694,7 @@ def parse_args():
     p = argparse.ArgumentParser(
         description=(
             "Offline eval of DMD2-distilled Action-Conditioned World Model "
-            "(LIBERO, 17-frame layout, skip-dynamics)"
+            "(LIBERO, paired 5-frame layout, skip-dynamics)"
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

@@ -199,7 +199,7 @@ def _build_no_s3_run(job: LazyDict) -> LazyDict:
     return no_s3_job
 
 
-# LIBERO LeRobot 256×256 dual-cam task0 - 17 frame prediction (state_t=5)
+# LIBERO LeRobot 256×256 dual-cam task0 - paired 5 frame prediction (state_t=2)
 # Teacher: ActionConditionedMinimalV1LVGDiT, action_dim=8, num_action_per_chunk=1
 dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = make_experiment(
     name="dmd2_trigflow_distill_wm_libero_lerobot_256_task0",
@@ -215,16 +215,16 @@ dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = make_experiment(
     overrides=dict(
         model=dict(
             config=dict(
-                # 17 pixel frames → 5 latent frames (temporal compression = 4, +1 blank)
-                state_t=5,
+                # paired 5 pixel frames → 2 latent frames (temporal compression = 4)
+                state_t=2,
                 # Teacher trained without clean cond timesteps (conditional_frame_timestep=-1.0)
                 use_clean_cond_timesteps=False,
                 # Teacher trained with adjust_video_noise=False → multiplier must be 1.0
                 multiply_noise_by_video_len=False,
-                # Always 3 conditional frames (blank + cam1_t + cam2_t)
-                conditional_frames_probs={0: 0.0, 1: 0.0, 2: 0.0, 3: 1.0},
-                min_num_conditional_frames=3,
-                max_num_conditional_frames=3,
+                # Always 1 conditional frame (view_t in each paired sample)
+                conditional_frames_probs={0: 0.0, 1: 1.0, 2: 0.0},
+                min_num_conditional_frames=1,
+                max_num_conditional_frames=1,
                 # 4-GPU single-node training
                 fsdp_shard_size=4,
                 # Use precomputed T5 embeddings from data batch
@@ -249,7 +249,10 @@ dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = make_experiment(
                     use_crossattn_projection=False,
                 ),
                 teacher_load_from=dict(
-                    load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt",
+                    load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/old_light/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000006000/model_ema_bf16.pt",
+                    #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/single/libero-10_task0/12000/model_ema_bf16.pt",
+                    #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt",
+                    #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/reconstruct_new/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt",
                     credentials=None,
                 ),
                 teacher_guidance=0,

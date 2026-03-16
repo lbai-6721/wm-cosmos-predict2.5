@@ -27,26 +27,24 @@ Each parquet file is one episode with columns:
 No explicit 'dones' column — each file is one complete episode.
 Episode ends at the last row (index T-1).
 
-── Dual-camera skip-dynamics (always enabled) ──────────────────────────────
+── Dual-camera skip-dynamics (strong paired batch) ─────────────────────────
 Training objective:
   (cam1_t, cam2_t, task, a_{t+d}, d)  →  (cam1_{t+d+1}, cam2_{t+d+1})
 
-17-frame video layout (state_t=5, num_conditional_frames=3):
-  Frame 0       : zeros                        (latent 0 – blank anchor)
-  Frames 1–4    : cam1_t ×4                   (latent 1 – conditioning, agentview)
-  Frames 5–8    : cam2_t ×4                   (latent 2 – conditioning, wrist)
-  Frames 9–12   : cam1_{t+d+1} ×4            (latent 3 – predicted, agentview)
-  Frames 13–16  : cam2_{t+d+1} ×4            (latent 4 – predicted, wrist)
+Each dataset item returns a paired mini-batch with two single-view samples:
+  Sample 0 (cam1): [cam1_t, cam1_{t+d+1} ×4]
+  Sample 1 (cam2): [cam2_t, cam2_{t+d+1} ×4]
 
-  Symmetric encoding: cam1 and cam2 each encoded from 4 pixel frames (equal quality).
-  Blank anchor in latent 0 ensures all conditioning info is in full 4-frame latents.
+5-frame video layout per view (state_t=2, num_conditional_frames=1):
+  Frame 0      : view_t                         (latent 0 – conditioning)
+  Frames 1–4   : view_{t+d+1} ×4               (latent 1 – predicted)
 
-action : [1, 8] float32  — [a_{t+d} ; d/(max_delay-1)]
-video  : [3, 17, 256, 256] uint8
+action : [2, 1, 8] float32  — [a_{t+d} ; d/(max_delay-1)] repeated for 2 views
+video  : [2, 3, 5, 256, 256] uint8
 
 Eval frame extraction:
-  cam1_pred = video_out[:, :, 9]   (first frame of latent 3)
-  cam2_pred = video_out[:, :, 13]  (first frame of latent 4)
+  cam1_pred = video_out[0, :, 1]   (first frame of latent 1)
+  cam2_pred = video_out[1, :, 1]   (first frame of latent 1)
 
 Max window needed: max_delay + 1 = 6 (only frames t and t+d+1).
 
@@ -85,9 +83,9 @@ _ACT_KEY = "action"
 # VAE temporal compression factor.
 _TEMPORAL_COMPRESSION = 4
 
-# state_t=5: 17 pixel frames total.
-# Layout: 1 blank + 4×cam1_t + 4×cam2_t + 4×cam1_pred + 4×cam2_pred
-_SEQUENCE_LENGTH = 1 + 4 * _TEMPORAL_COMPRESSION  # = 17
+# state_t=2: 5 pixel frames total.
+# Layout per paired view sample: 1×current + 4×future
+_SEQUENCE_LENGTH = 1 + _TEMPORAL_COMPRESSION  # = 5
 
 _MAX_RETRIES = 16
 
@@ -106,10 +104,10 @@ class LeRobotLiberoDataset(Dataset):
     """PyTorch Dataset for LIBERO pixel trajectories in LeRobot v2.0 parquet format.
 
     Dual-camera skip-dynamics mode only:
-      video  : [3, 17, 256, 256] uint8  (state_t=5)
-      action : [1, 8] float32           [a_{t+d} ; d/(max_delay-1)]
+      video  : [2, 3, 5, 256, 256] uint8  (paired cam1/cam2 batch, state_t=2)
+      action : [2, 1, 8] float32          [a_{t+d} ; d/(max_delay-1)] for each view
 
-    Use with state_t=5, num_conditional_frames=3 in the experiment config.
+    Use with state_t=2, num_conditional_frames=1 in the experiment config.
     """
 
     def __init__(
@@ -149,7 +147,7 @@ class LeRobotLiberoDataset(Dataset):
         self.data_root = pathlib.Path(data_root)
         self.max_delay = max_delay
         self.mode = mode
-        self.sequence_length = _SEQUENCE_LENGTH  # = 17
+        self.sequence_length = _SEQUENCE_LENGTH  # = 5
         self.task_indices = set(task_indices) if task_indices is not None else None
 
         # ── collect all episode parquet files ────────────────────────────────
@@ -271,35 +269,36 @@ class LeRobotLiberoDataset(Dataset):
         # Action at t+d
         act = np.asarray(df[_ACT_KEY].iloc[start_t + d], dtype=np.float32)  # [7]
 
-        H, W = cam1_t.shape[:2]
-        blank = np.zeros((H, W, 3), dtype=np.uint8)
+        # Build paired 5-frame videos (state_t=2, num_conditional_frames=1)
+        # View sample layout:
+        # Frame 0    : current view frame          (latent 0 – cond)
+        # Frames 1-4 : predicted future frame ×4  (latent 1 – predicted)
+        cam1_imgs = np.stack(
+            [cam1_t, cam1_pred, cam1_pred, cam1_pred, cam1_pred],
+            axis=0,
+        )  # [5, H, W, 3]
+        cam2_imgs = np.stack(
+            [cam2_t, cam2_pred, cam2_pred, cam2_pred, cam2_pred],
+            axis=0,
+        )  # [5, H, W, 3]
+        paired_imgs = np.stack([cam1_imgs, cam2_imgs], axis=0)  # [2, 5, H, W, 3]
 
-        # Build 17-frame video (state_t=5, num_conditional_frames=3)
-        # Frame 0       : zeros                (latent 0 – blank anchor)
-        # Frames 1–4    : cam1_t ×4           (latent 1 – cond, agentview)
-        # Frames 5–8    : cam2_t ×4           (latent 2 – cond, wrist)
-        # Frames 9–12   : cam1_pred ×4        (latent 3 – predicted)
-        # Frames 13–16  : cam2_pred ×4        (latent 4 – predicted)
-        imgs = np.concatenate([
-            blank[np.newaxis],                                               # [1, H, W, 3]  frame 0
-            np.stack([cam1_t,   cam1_t,   cam1_t,   cam1_t],   axis=0),     # [4, H, W, 3]  frames 1-4
-            np.stack([cam2_t,   cam2_t,   cam2_t,   cam2_t],   axis=0),     # [4, H, W, 3]  frames 5-8
-            np.stack([cam1_pred, cam1_pred, cam1_pred, cam1_pred], axis=0),  # [4, H, W, 3]  frames 9-12
-            np.stack([cam2_pred, cam2_pred, cam2_pred, cam2_pred], axis=0),  # [4, H, W, 3]  frames 13-16
-        ], axis=0)  # [17, H, W, 3]
-
-        # → [3, 17, H, W] uint8
-        video = torch.from_numpy(imgs.astype(np.uint8)).permute(3, 0, 1, 2)
+        # → [2, 3, 5, H, W] uint8 (strong paired batch: [cam1, cam2])
+        video = torch.from_numpy(paired_imgs.astype(np.uint8)).permute(0, 4, 1, 2, 3)
 
         # Action with normalised delay → [1, 8]
         d_norm = float(d) / float(max(self.max_delay - 1, 1))
         action_vec = np.concatenate([act, np.array([d_norm], dtype=np.float32)])
-        action = torch.from_numpy(action_vec).unsqueeze(0)  # [1, 8]
+        action = torch.from_numpy(action_vec).unsqueeze(0).repeat(2, 1)  # [2, 8]
+        action = action.unsqueeze(1)  # [2, 1, 8]
 
         # Metadata
         task_index = int(df["task_index"].iloc[0])
         ep_index   = int(df["episode_index"].iloc[0])
-        key = f"libero_spatial/ep{ep_index:04d}/t{start_t:04d}_d{d}"
+        key = [
+            f"libero_spatial/ep{ep_index:04d}/t{start_t:04d}_d{d}_cam1",
+            f"libero_spatial/ep{ep_index:04d}/t{start_t:04d}_d{d}_cam2",
+        ]
 
         # T5 text embedding: (512, 1024) float32 — DataLoader stacks to (B, 512, 1024)
         if self._t5_embs is not None:
@@ -307,16 +306,17 @@ class LeRobotLiberoDataset(Dataset):
             t5_emb = self._t5_embs[task_str].squeeze(0).float()  # (512, 1024)
         else:
             t5_emb = torch.zeros(512, 1024, dtype=torch.float32)
+        t5_emb = t5_emb.unsqueeze(0).repeat(2, 1, 1)  # [2, 512, 1024]
 
         return {
-            "video": video,                                    # [3, 13, 256, 256] uint8
-            "action": action,                                  # [1, 8] float32
+            "video": video,                                    # [2, 3, 5, 256, 256] uint8
+            "action": action,                                  # [2, 1, 8] float32
             "__key__": key,
-            "fps": 10,
-            "image_size": 256 * torch.ones(4).cuda(),
+            "fps": torch.full((2,), 10.0, dtype=torch.float32),
+            "image_size": (256 * torch.ones(2, 4)).cuda(),
             "num_frames": self.sequence_length,
-            "padding_mask": torch.zeros(1, 256, 256).cuda(),
-            "t5_text_embeddings": t5_emb,                      # [512, 1024] float32
+            "padding_mask": torch.zeros(2, 1, 256, 256).cuda(),
+            "t5_text_embeddings": t5_emb,                      # [2, 512, 1024] float32
         }
 
 
