@@ -144,8 +144,9 @@ ${IMAGINAIRE_OUTPUT_ROOT}/cosmos3_interactive/<experiment_name>/checkpoints/iter
 ```bash
 CHECKPOINTS_DIR=${IMAGINAIRE_OUTPUT_ROOT}/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
 
-CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5-new/output/wm-distill-output/distill_v3_op/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
-CHECKPOINT_ITER=$(cat ${CHECKPOINTS_DIR}/latest_checkpoint.txt)
+CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5-new/output/wm-distill-output/distill_v3_light/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
+CHECKPOINT_ITER=iter_000011000
+#CHECKPOINT_ITER=$(cat ${CHECKPOINTS_DIR}/latest_checkpoint.txt)
 
 python scripts/convert_distcp_to_pt.py \
   ${CHECKPOINTS_DIR}/${CHECKPOINT_ITER}/model \
@@ -209,15 +210,15 @@ CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
     --save-images outputs/eval_distill/images_step1_nn \
     --output outputs/eval_distill/task0_step1_nn.json
 
-CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
-    --ckpt /home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_v3/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints/iter_000011000/model_ema_bf16.pt \
+CUDA_VISIBLE_DEVICES=5 python wm4vla/scripts/eval_distilled_world_model.py \
+    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5-new/output/wm-distill-output/distill_v3_light/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints/iter_000011000/model_ema_bf16.pt \
     --task-indices 0 \
     --num-steps 1 \
     --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
-    --save-images outputs/eval_distill/images_step1_test_time \
-    --output outputs/eval_distill/task0_step1_test_time.json
+    --save-images outputs/eval_distill/images_step1_light_test_env \
+    --output outputs/eval_distill/task0_step1_light_test_env.json
 ```
-
+  
 ### 输出结果格式
 
 JSON 结果按 `steps=N` → `d=D` 两级索引：
