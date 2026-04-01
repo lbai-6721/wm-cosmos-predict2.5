@@ -53,6 +53,7 @@ input_root/
 
 import math
 import os
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -649,16 +650,40 @@ class Video2WorldInference:
             torch.cuda.empty_cache()
 
         # Decode the latent samples
+        decode_times = []
         if isinstance(sample, list):
             # Decode the latent sample into a video tensor
             video_list = []
-            for sample_chunk in sample:
+            for i, sample_chunk in enumerate(sample):
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                decode_t0 = time.perf_counter()
                 video_chunk = self.model.decode(sample_chunk)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                decode_t1 = time.perf_counter()
+                decode_times.append(decode_t1 - decode_t0)
+                log.info(f"[Decode Timing] chunk={i+1}/{len(sample)} decode_s={decode_t1 - decode_t0:.4f}")
                 video_list.append(video_chunk)
             video = torch.cat(video_list, dim=3)
         else:
             # Decode the latent sample into a video tensor
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            decode_t0 = time.perf_counter()
             video = self.model.decode(sample)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            decode_t1 = time.perf_counter()
+            decode_times.append(decode_t1 - decode_t0)
+            log.info(f"[Decode Timing] decode_s={decode_t1 - decode_t0:.4f}")
+
+        if decode_times:
+            log.info(
+                f"[Decode Timing] total_decode_s={sum(decode_times):.4f} "
+                f"avg_decode_s={sum(decode_times) / len(decode_times):.4f} "
+                f"num_decode_calls={len(decode_times)}"
+            )
 
         # Memory Optimization Step 6: Final Cleanup
         # Offload decoder after decoding & reload the tokenizer for the next inference call

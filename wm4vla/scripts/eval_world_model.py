@@ -40,6 +40,8 @@ CUDA_VISIBLE_DEVICES=0 python scripts/eval_world_model.py \
     --experiment ac_libero_lerobot_256_pixels_2b_task0 \
     --t5-emb-path /home/kyji/public/dataset/lerobot/lerobot--libero_10_image@v2.0/meta/t5_embeddings.pkl \
     --num-steps 35 \
+    --tokenizer-backend wan2pt1 \
+    --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/Wan2.1_VAE.pth \
     --save-images outputs/eval_wm_test/test_time_new/test_35_nc_op/libero-10_task0_images \
     --output outputs/eval_wm_test/test_time_new/test_35_nc_op/libero-10_task0.json
 
@@ -349,12 +351,39 @@ def evaluate(args):
 
     from cosmos_predict2._src.predict2.inference.video2world import Video2WorldInference
 
+    experiment_opts: List[str] = []
+    tokenizer_backend = "lightvae" if args.use_lightvae else args.tokenizer_backend
+    tokenizer_vae_pth = args.tokenizer_vae_pth
+    if tokenizer_backend == "lightvae":
+        tokenizer_vae_pth = tokenizer_vae_pth or args.lightvae_pth
+        experiment_opts.extend(
+            [
+                "tokenizer=wan2pt1_lightvae_tokenizer",
+                f"model.config.tokenizer.vae_pth={tokenizer_vae_pth}",
+            ]
+        )
+        if args.lightx2v_root:
+            experiment_opts.append(f"+model.config.tokenizer.lightx2v_root={args.lightx2v_root}")
+        print(f"[info] Tokenizer backend=lightvae, overrides: {experiment_opts}")
+    else:
+        if args.lightx2v_root:
+            print("[warn] --lightx2v-root is ignored when tokenizer backend is wan2pt1")
+        if tokenizer_vae_pth:
+            experiment_opts.extend(
+                [
+                    "tokenizer=wan2pt1_tokenizer",
+                    f"model.config.tokenizer.vae_pth={tokenizer_vae_pth}",
+                ]
+            )
+            print(f"[info] Tokenizer backend=wan2pt1, overrides: {experiment_opts}")
+
     wm = Video2WorldInference(
         experiment_name=experiment_name,
         ckpt_path=str(args.ckpt),
         s3_credential_path="",
         context_parallel_size=1,
         config_file=_CONFIG_FILE,
+        experiment_opts=experiment_opts,
     )
     wm.model.eval()
 
@@ -675,6 +704,9 @@ def evaluate(args):
             "num_steps": args.num_steps,
             "guidance": args.guidance,
             "t5_emb_path": str(args.t5_emb_path) if args.t5_emb_path else None,
+            "tokenizer_backend": tokenizer_backend,
+            "tokenizer_vae_pth": str(tokenizer_vae_pth) if tokenizer_vae_pth else None,
+            "lightx2v_root": str(args.lightx2v_root) if tokenizer_backend == "lightvae" and args.lightx2v_root else None,
             "delays_evaluated": delays,
         }
         out = {"meta": meta, "results": summary}
@@ -749,6 +781,29 @@ def parse_args():
     p.add_argument(
         "--save-images", type=str, default=None,
         help="Directory to save pred vs GT image pairs (optional)",
+    )
+    p.add_argument(
+        "--tokenizer-backend", type=str, choices=["wan2pt1", "lightvae"], default="wan2pt1",
+        help="Tokenizer backend for evaluation inference.",
+    )
+    p.add_argument(
+        "--tokenizer-vae-pth", type=str, default="",
+        help=(
+            "Optional VAE checkpoint path override. "
+            "Works for both backends: wan2pt1/lightvae."
+        ),
+    )
+    p.add_argument(
+        "--use-lightvae", action="store_true",
+        help="Deprecated alias of --tokenizer-backend lightvae.",
+    )
+    p.add_argument(
+        "--lightvae-pth", type=str, default="/home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth",
+        help="LightVAE checkpoint path when --use-lightvae is enabled.",
+    )
+    p.add_argument(
+        "--lightx2v-root", type=str, default="",
+        help="Optional LightX2V repo root (used when lightx2v is not importable from PYTHONPATH).",
     )
     return p.parse_args()
 

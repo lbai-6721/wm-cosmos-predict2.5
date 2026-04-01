@@ -491,23 +491,36 @@ def evaluate(args):
 
                 # ── 对每个 num_steps 分别推理 ──────────────────────────
                 for ns in num_steps_list:
-                    time_start = time.time()
-                    time_inference_start = time.time()
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    time_start = time.perf_counter()
                     with torch.no_grad():
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        time_inference_start = time.perf_counter()
                         latents = model.generate_samples_from_batch(
                             data_batch,
                             n_sample=1,
                             seed=args.seed,
                             num_steps=ns,
                         )
-                        time_inference_end = time.time()
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        time_inference_end = time.perf_counter()
                         print(f"Time taken for inference: {time_inference_end - time_inference_start} seconds")
-                        time_decode_start = time.time()
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        time_decode_start = time.perf_counter()
                         video_out = model.decode(latents)  # [-1, 1], [2, 3, 5, H, W]
-                        time_decode_end = time.time()
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        time_decode_end = time.perf_counter()
                         print(f"Time taken for decode: {time_decode_end - time_decode_start} seconds")
-                    elapsed_ms = (time.time() - time_start) * 1000
-                    print(f"Time taken for total: {time.time() - time_start} seconds")
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    total_elapsed = time.perf_counter() - time_start
+                    elapsed_ms = total_elapsed * 1000
+                    print(f"Time taken for total: {total_elapsed} seconds")
                     # 提取预测帧（paired 5-frame）
                     cam1_pred = _tensor_to_uint8(video_out[0, :, 1])   # batch0 frame1
                     cam2_pred = _tensor_to_uint8(video_out[1, :, 1])   # batch1 frame1

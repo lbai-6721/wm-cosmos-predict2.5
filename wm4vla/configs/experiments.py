@@ -8,6 +8,7 @@ Registers five experiments into Hydra ConfigStore:
   - ac_libero_lerobot_256_pixels_2b_task0   (single-task ablation)
   - ac_libero_lerobot_256_pixels_2b_task01  (two-task ablation)
 """
+import os
 
 from hydra.core.config_store import ConfigStore
 
@@ -16,6 +17,21 @@ from cosmos_predict2._src.imaginaire.utils.checkpoint_db import get_checkpoint_p
 from cosmos_predict2.config import MODEL_CHECKPOINTS, ModelKey
 
 DEFAULT_CHECKPOINT = MODEL_CHECKPOINTS[ModelKey()]
+_WM4VLA_WAN21_VAE_PATH = os.getenv("WM4VLA_WAN21_VAE_PATH", "/home/kyji/public/models/lightx2v/vae/Wan2.1_VAE.pth")
+_WM4VLA_LIGHTVAE_PATH = os.getenv(
+    "WM4VLA_LIGHTVAE_PATH", "/home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth"
+)
+_WM4VLA_VAE_BACKEND = os.getenv("WM4VLA_VAE_BACKEND", "lightvae").strip().lower()
+_WM4VLA_VAE_PATH_BY_BACKEND = {
+    "wan2pt1": _WM4VLA_WAN21_VAE_PATH,
+    "lightvae": _WM4VLA_LIGHTVAE_PATH,
+}
+if _WM4VLA_VAE_BACKEND not in _WM4VLA_VAE_PATH_BY_BACKEND:
+    raise ValueError(
+        f"Invalid WM4VLA_VAE_BACKEND={_WM4VLA_VAE_BACKEND!r}. "
+        "Expected one of {'wan2pt1', 'lightvae'}."
+    )
+_WM4VLA_VAE_PATH = _WM4VLA_VAE_PATH_BY_BACKEND[_WM4VLA_VAE_BACKEND]
 
 # Shared trainer callback settings (disable S3 upload).
 _CALLBACKS_NO_S3 = dict(
@@ -80,6 +96,9 @@ ac_kinetix_pixels_2b = LazyDict(
                 conditional_frames_probs=None,
                 state_t=3,
                 text_encoder_config=None,
+                tokenizer=dict(
+                    vae_pth=_WM4VLA_VAE_PATH,
+                ),
                 net=dict(
                     action_dim=7,
                     num_action_per_chunk=1,
@@ -135,6 +154,9 @@ ac_libero_pixels_2b = LazyDict(
                 conditional_frames_probs=None,
                 state_t=4,
                 text_encoder_config=None,
+                tokenizer=dict(
+                    vae_pth=_WM4VLA_VAE_PATH,
+                ),
                 net=dict(
                     action_dim=8,
                     num_action_per_chunk=1,
@@ -197,6 +219,9 @@ def _libero_lerobot_256_base(
                     conditional_frames_probs=None,
                     state_t=2,
                     text_encoder_config=None,
+                    tokenizer=dict(
+                        vae_pth=_WM4VLA_VAE_PATH,
+                    ),
                     net=dict(
                         action_dim=8,
                         num_action_per_chunk=1,

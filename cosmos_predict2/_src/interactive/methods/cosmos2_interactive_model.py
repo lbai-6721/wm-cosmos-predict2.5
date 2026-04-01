@@ -18,6 +18,7 @@ from __future__ import annotations
 import collections
 import math
 import random
+import time
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
@@ -674,7 +675,14 @@ class Cosmos2InteractiveModel(ImaginaireModel):
 
         # Video tokens
         raw_state = data_batch[input_key]  # raw video
+        #if raw_state.is_cuda:
+            #torch.cuda.synchronize(raw_state.device)
+        #time_encode_start = time.perf_counter()
         latent_state = self.encode(raw_state).contiguous().float()  # latent state (i.e. video tokens)
+        #if raw_state.is_cuda:
+            #torch.cuda.synchronize(raw_state.device)
+        #time_encode_end = time.perf_counter()
+        #print(f"Encode time: {time_encode_end - time_encode_start} seconds")
 
         # Text embeddings: reuse precomputed ones if provided (inference scripts often pass them),
         # otherwise compute online when enabled.

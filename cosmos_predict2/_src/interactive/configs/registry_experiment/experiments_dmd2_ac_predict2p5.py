@@ -18,9 +18,6 @@ from copy import deepcopy
 from hydra.core.config_store import ConfigStore  # type: ignore[import]
 
 from cosmos_predict2._src.imaginaire.lazy_config import LazyDict
-from cosmos_predict2._src.imaginaire.utils.checkpoint_db import (
-    get_checkpoint_path,
-)
 from cosmos_predict2._src.interactive.configs.registry_defaults.teacher_model_paths import (
     ACTION_CONDITIONED_TEACHER_CKPT_2B_256X320,
 )
@@ -167,12 +164,10 @@ def _build_no_s3_run(job: LazyDict) -> LazyDict:
     no_s3_job = deepcopy(job)
 
     teacher_load_path = no_s3_job["model"]["config"]["teacher_load_from"]["load_path"]
-    # Only call get_checkpoint_path for S3 URIs or UUIDs; local paths are used as-is
-    resolved_path = (
-        teacher_load_path
-        if teacher_load_path.startswith("/") or teacher_load_path.startswith("./")
-        else get_checkpoint_path(teacher_load_path)
-    )
+    # Keep teacher checkpoint path unresolved during config import.
+    # This avoids network downloads as a side effect when users only run
+    # distilled-model evaluation with skip_teacher_init=True.
+    resolved_path = teacher_load_path
     no_s3_job["model"]["config"]["teacher_load_from"] = {
         "load_path": resolved_path,
         "credentials": None,
