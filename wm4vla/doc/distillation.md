@@ -129,7 +129,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun \
   --master_port=12340 \
   -m scripts.train \
   --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
-  --experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 \
+  --experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 
 ```
   dataloader_train.batch_size=4 \
 

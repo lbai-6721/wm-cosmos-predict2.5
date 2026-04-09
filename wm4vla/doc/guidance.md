@@ -48,7 +48,7 @@ CUDA_VISIBLE_DEVICES=0,2,3,4 torchrun \
   --master_port=12340 \
   -m scripts.train \
   --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
-  --experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 \
+  --experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 
 ```
 ## 蒸馏输出与 Checkpoint 转换
 
