@@ -150,16 +150,17 @@ def evaluate_single_view_timing(args):
             vid_input = build_single_view_input(view_t)
 
             for delay in delays:
-                pred_t = start_t + delay + 1
+                pred_t = start_t + delay
                 if pred_t >= total_frames:
                     continue
 
-                act_raw = np.asarray(df[base_eval._ACT_KEY].iloc[start_t + delay], dtype=np.float32)
-                d_norm = float(delay) / float(base_eval._MAX_DELAY - 1)
-                action_vec = np.concatenate([act_raw, [d_norm]])
-                action = torch.from_numpy(action_vec).float().unsqueeze(0).unsqueeze(1)  # [1, 1, 8]
+                action_rows = np.stack(
+                    [np.asarray(df[base_eval._ACT_KEY].iloc[start_t + offset], dtype=np.float32) for offset in range(delay)],
+                    axis=0,
+                )
+                action, delay_scalar = base_eval.build_action_inputs(action_rows, delay=delay, batch_size=1)
 
-                data_batch = base_eval.build_data_batch(vid_input, t5_emb, action)
+                data_batch = base_eval.build_data_batch(vid_input, t5_emb, action, delay_scalar)
 
                 _sync_cuda()
                 start_time = time.perf_counter()

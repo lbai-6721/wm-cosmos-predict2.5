@@ -24,6 +24,7 @@ from cosmos_predict2._src.interactive.configs.registry_defaults.teacher_model_pa
 from cosmos_predict2._src.interactive.configs.registry_experiment.experiments_dmd2_predict2p5 import (
     make_experiment,
 )
+from wm4vla.configs.wm_conditioning import ACTION_CHUNK_LEN, LIBERO_ACTION_SLOT_DIM
 
 # Bridge dataset - 13 frame prediction at 256x320 resolution
 dmd2_trigflow_distill_cosmos_predict2_2B_action_conditioned_bridge_13frame_256x320 = make_experiment(
@@ -195,7 +196,7 @@ def _build_no_s3_run(job: LazyDict) -> LazyDict:
 
 
 # LIBERO LeRobot 256×256 dual-cam task0 - paired 5 frame prediction (state_t=2)
-# Teacher: ActionConditionedMinimalV1LVGDiT, action_dim=8, num_action_per_chunk=1
+# Teacher: ActionConditionedMinimalV1LVGDiT, action_dim=8, num_action_per_chunk=8
 dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = make_experiment(
     name="dmd2_trigflow_distill_wm_libero_lerobot_256_task0",
     data_train="lerobot_libero_dual_cam_256_task0_train",
@@ -229,18 +230,18 @@ dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = make_experiment(
                     vae_pth="/home/kyji/.cache/huggingface/hub/models--nvidia--Cosmos-Predict2.5-2B/snapshots/6787e176dce74a101d922174a95dba29fa5f0c55/tokenizer.pth",
                 ),
                 net=dict(
-                    action_dim=8,
-                    num_action_per_chunk=1,
+                    action_dim=LIBERO_ACTION_SLOT_DIM,
+                    num_action_per_chunk=ACTION_CHUNK_LEN,
                     use_crossattn_projection=False,
                 ),
                 net_fake_score=dict(
-                    action_dim=8,
-                    num_action_per_chunk=1,
+                    action_dim=LIBERO_ACTION_SLOT_DIM,
+                    num_action_per_chunk=ACTION_CHUNK_LEN,
                     use_crossattn_projection=False,
                 ),
                 net_teacher=dict(
-                    action_dim=8,
-                    num_action_per_chunk=1,
+                    action_dim=LIBERO_ACTION_SLOT_DIM,
+                    num_action_per_chunk=ACTION_CHUNK_LEN,
                     use_crossattn_projection=False,
                 ),
                 teacher_load_from=dict(

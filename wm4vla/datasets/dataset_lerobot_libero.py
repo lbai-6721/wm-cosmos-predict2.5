@@ -13,47 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dataset for LIBERO pixel trajectories stored in LeRobot v2.0 parquet format.
+"""Dataset for paired-view LIBERO parquet trajectories.
 
-Data layout:
-  <data_root>/data/chunk-000/episode_{episode_index:06d}.parquet
+Supported dataset layouts:
 
-Each parquet file is one episode with columns:
-  observation.images.image       : dict {'bytes': <PNG bytes>}  → (256, 256, 3) uint8
-  observation.images.wrist_image : dict {'bytes': <PNG bytes>}  → (256, 256, 3) uint8
-  observation.state              : float32 [8]
-  action                         : float32 [7]   (already in [-1, 1])
+1. ``lerobot/lerobot--libero_10_image@v2.0``
+2. ``physical-intelligence/libero``
 
-No explicit 'dones' column — each file is one complete episode.
-Episode ends at the last row (index T-1).
+Each dataset item returns a strong paired mini-batch with two single-view
+samples:
 
-── Dual-camera skip-dynamics (strong paired batch) ─────────────────────────
-Training objective:
-  (cam1_t, cam2_t, task, a_{t+d}, d)  →  (cam1_{t+d+1}, cam2_{t+d+1})
+  Sample 0 (cam1): [cam1_t, cam1_{t+d} x4]
+  Sample 1 (cam2): [cam2_t, cam2_{t+d} x4]
 
-Each dataset item returns a paired mini-batch with two single-view samples:
-  Sample 0 (cam1): [cam1_t, cam1_{t+d+1} ×4]
-  Sample 1 (cam2): [cam2_t, cam2_{t+d+1} ×4]
-
-5-frame video layout per view (state_t=2, num_conditional_frames=1):
-  Frame 0      : view_t                         (latent 0 – conditioning)
-  Frames 1–4   : view_{t+d+1} ×4               (latent 1 – predicted)
-
-action : [2, 1, 8] float32  — [a_{t+d} ; d/(max_delay-1)] repeated for 2 views
-video  : [2, 3, 5, 256, 256] uint8
-
-Eval frame extraction:
-  cam1_pred = video_out[0, :, 1]   (first frame of latent 1)
-  cam2_pred = video_out[1, :, 1]   (first frame of latent 1)
-
-Max window needed: max_delay + 1 = 6 (only frames t and t+d+1).
-
-cam1 = observation.images.image       (agentview, 3rd-person)
-cam2 = observation.images.wrist_image (wrist / 1st-person)
-
-Default data root:
-  /home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/lerobot/lerobot--libero_spatial_image@v2.0
-  Override with LEROBOT_LIBERO_DATA_ROOT environment variable.
+Tensor layout:
+  video        : [2, 3, 5, 256, 256] uint8
+  action       : [2, max_delay, 8] float32
+  delay_scalar : [2, 1] float32
 """
 
 import io
@@ -71,27 +47,37 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
+from wm4vla.conditioning import normalize_delay_scalar, pack_masked_action_sequence
+from wm4vla.configs.wm_conditioning import ACTION_CHUNK_LEN, TRAIN_DELAY_MIN
+
 _DEFAULT_DATA_ROOT = (
-    "/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/lerobot"
-    "/lerobot--libero_spatial_image@v2.0"
+    "/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/lerobot"
+    "/lerobot--libero_10_image@v2.0"
 )
 
-_CAM1_KEY = "observation.images.image"
-_CAM2_KEY = "observation.images.wrist_image"
-_ACT_KEY = "action"
+_SCHEMA_CANDIDATES = (
+    {
+        "name": "lerobot_v2",
+        "cam1": "observation.images.image",
+        "cam2": "observation.images.wrist_image",
+        "state": "observation.state",
+        "action": "action",
+    },
+    {
+        "name": "physical_intelligence_flat",
+        "cam1": "image",
+        "cam2": "wrist_image",
+        "state": "state",
+        "action": "actions",
+    },
+)
 
-# VAE temporal compression factor.
 _TEMPORAL_COMPRESSION = 4
-
-# state_t=2: 5 pixel frames total.
-# Layout per paired view sample: 1×current + 4×future
-_SEQUENCE_LENGTH = 1 + _TEMPORAL_COMPRESSION  # = 5
-
+_SEQUENCE_LENGTH = 1 + _TEMPORAL_COMPRESSION
 _MAX_RETRIES = 16
 
 
 def _decode_image(cell) -> np.ndarray:
-    """Decode a LeRobot v2.0 image cell (dict with 'bytes' key) → (H, W, 3) uint8."""
     if isinstance(cell, dict):
         raw = cell.get("bytes") or cell.get("path")
         if isinstance(raw, (bytes, bytearray)):
@@ -100,43 +86,54 @@ def _decode_image(cell) -> np.ndarray:
     raise TypeError(f"Expected dict image cell, got {type(cell)}")
 
 
+def _collect_episode_files(data_root: pathlib.Path) -> list[pathlib.Path]:
+    data_dir = data_root / "data"
+    if not data_dir.exists():
+        raise FileNotFoundError(f"LeRobotLiberoDataset: data directory not found: {data_dir}")
+
+    all_files = sorted(data_dir.glob("chunk-*/episode_*.parquet"))
+    if not all_files:
+        raise FileNotFoundError(f"No episode parquet files found in {data_dir}")
+    return all_files
+
+
+def _infer_schema_from_info(data_root: pathlib.Path) -> dict[str, str] | None:
+    info_path = data_root / "meta" / "info.json"
+    if not info_path.exists():
+        return None
+
+    info = json.loads(info_path.read_text())
+    features = set(info.get("features", {}).keys())
+    for schema in _SCHEMA_CANDIDATES:
+        if schema["cam1"] in features and schema["cam2"] in features and schema["action"] in features:
+            return dict(schema)
+    return None
+
+
+def _infer_schema_from_file(file_path: pathlib.Path) -> dict[str, str]:
+    columns = set(pd.read_parquet(file_path, columns=None).columns)
+    for schema in _SCHEMA_CANDIDATES:
+        if schema["cam1"] in columns and schema["cam2"] in columns and schema["action"] in columns:
+            return dict(schema)
+    raise RuntimeError(
+        f"Unsupported LIBERO parquet schema in {file_path}. "
+        f"Found columns: {sorted(columns)}"
+    )
+
+
 class LeRobotLiberoDataset(Dataset):
-    """PyTorch Dataset for LIBERO pixel trajectories in LeRobot v2.0 parquet format.
-
-    Dual-camera skip-dynamics mode only:
-      video  : [2, 3, 5, 256, 256] uint8  (paired cam1/cam2 batch, state_t=2)
-      action : [2, 1, 8] float32          [a_{t+d} ; d/(max_delay-1)] for each view
-
-    Use with state_t=2, num_conditional_frames=1 in the experiment config.
-    """
-
     def __init__(
         self,
         data_root: str | None = None,
-        max_delay: int = 5,
+        max_delay: int = ACTION_CHUNK_LEN,
+        sampled_delay_max: int | None = None,
+        delay_normalization_max: int | None = None,
         val_ratio: float = 0.1,
         mode: str = "train",
         seed: int = 0,
         t5_emb_path: str | None = None,
         task_indices: Sequence[int] | None = None,
     ):
-        """
-        Args:
-            data_root: Path to the lerobot dataset root (contains data/, meta/).
-                Falls back to LEROBOT_LIBERO_DATA_ROOT env var, then the
-                compile-time default.
-            max_delay: Maximum async delay D_max; delay d is sampled from [0, max_delay-1].
-                Requires episode length ≥ max_delay + 1.
-            val_ratio: Fraction of episodes held out for validation.
-            mode: "train" or "val".
-            seed: RNG seed for the train/val split.
-            t5_emb_path: Path to precomputed T5 embeddings pickle
-                ({task_str: tensor(1,512,1024)}). Defaults to
-                <data_root>/meta/t5_embeddings.pkl. Set to "" to disable.
-            task_indices: If set, only include episodes whose task_index is in
-                this list. Useful for single-task ablation (e.g. [0] for task 0
-                only). None = all tasks (default).
-        """
         super().__init__()
         if mode not in ("train", "val"):
             raise ValueError(f"mode must be 'train' or 'val', got {mode!r}")
@@ -146,22 +143,29 @@ class LeRobotLiberoDataset(Dataset):
 
         self.data_root = pathlib.Path(data_root)
         self.max_delay = max_delay
+        self.sampled_delay_max = max_delay if sampled_delay_max is None else int(sampled_delay_max)
+        self.delay_normalization_max = max_delay if delay_normalization_max is None else int(delay_normalization_max)
         self.mode = mode
-        self.sequence_length = _SEQUENCE_LENGTH  # = 5
+        self.sequence_length = _SEQUENCE_LENGTH
         self.task_indices = set(task_indices) if task_indices is not None else None
-
-        # ── collect all episode parquet files ────────────────────────────────
-        data_dir = self.data_root / "data" / "chunk-000"
-        if not data_dir.exists():
-            raise FileNotFoundError(
-                f"LeRobotLiberoDataset: data directory not found: {data_dir}"
+        self._dataset_key_prefix = self.data_root.name.replace("/", "_")
+        if not (TRAIN_DELAY_MIN <= self.sampled_delay_max <= self.max_delay):
+            raise ValueError(
+                f"sampled_delay_max must be in [{TRAIN_DELAY_MIN}, {self.max_delay}], got {self.sampled_delay_max}"
+            )
+        if self.delay_normalization_max < self.sampled_delay_max:
+            raise ValueError(
+                "delay_normalization_max must be >= sampled_delay_max, "
+                f"got {self.delay_normalization_max} < {self.sampled_delay_max}"
             )
 
-        all_files = sorted(data_dir.glob("episode_*.parquet"))
-        if not all_files:
-            raise FileNotFoundError(f"No episode parquet files found in {data_dir}")
+        all_files = _collect_episode_files(self.data_root)
+        schema = _infer_schema_from_info(self.data_root) or _infer_schema_from_file(all_files[0])
+        self._schema_name = schema["name"]
+        self._cam1_key = schema["cam1"]
+        self._cam2_key = schema["cam2"]
+        self._action_key = schema["action"]
 
-        # ── train/val split at episode level ─────────────────────────────────
         rng = np.random.default_rng(seed)
         perm = rng.permutation(len(all_files))
         n_val = max(1, int(len(all_files) * val_ratio))
@@ -173,65 +177,57 @@ class LeRobotLiberoDataset(Dataset):
             if (i in val_set) == (mode == "val")
         ]
 
-        # ── build flat (file, start_t) window index ───────────────────────────
-        # Valid start: start_t + max_delay < T  →  start_t ≤ T - max_delay - 1
-        # (so that start_t + d + 1 ≤ start_t + max_delay < T for any d)
         self._windows: list[tuple[pathlib.Path, int]] = []
         for file_path in selected_files:
-            # Read lightweight columns: frame_index (for T) + task_index (for filtering)
             df_meta = pd.read_parquet(file_path, columns=["frame_index", "task_index"])
-            # Apply task_indices filter (keep all when task_indices is None)
             if self.task_indices is not None:
                 ep_task_index = int(df_meta["task_index"].iloc[0])
                 if ep_task_index not in self.task_indices:
                     continue
-            T = len(df_meta)
-            max_valid_start = T - max_delay  # start_t ∈ [0, T - max_delay - 1]
-            for t in range(max_valid_start):
-                self._windows.append((file_path, t))
+            episode_len = len(df_meta)
+            max_valid_start = episode_len - self.sampled_delay_max
+            for start_t in range(max_valid_start):
+                self._windows.append((file_path, start_t))
 
         if not self._windows:
             raise RuntimeError(
-                f"No valid windows found (mode={mode}, max_delay={max_delay}). "
-                "All episodes may be too short."
+                f"No valid windows found (mode={mode}, max_delay={max_delay}, "
+                f"sampled_delay_max={self.sampled_delay_max}). "
+                "All episodes may be too short or filtered out."
             )
 
         task_filter_str = f", task_indices={sorted(self.task_indices)}" if self.task_indices else ""
         print(
             f"[LeRobotLiberoDataset] mode={mode}: {len(self._windows):,} windows "
-            f"(max_delay={max_delay}{task_filter_str}, data_root={data_root})"
+            f"(schema={self._schema_name}, max_delay={max_delay}, "
+            f"sampled_delay_max={self.sampled_delay_max}{task_filter_str}, "
+            f"data_root={data_root})"
         )
 
-        # ── load precomputed T5 text embeddings ───────────────────────────────
-        # Format: {task_description_str: tensor(1, 512, 1024, bfloat16)}
-        # Produced by scripts/precompute_libero_t5.py
         if t5_emb_path == "":
             self._t5_embs: dict | None = None
             print("[LeRobotLiberoDataset] T5 embeddings disabled (t5_emb_path='')")
         else:
-            _pkl = pathlib.Path(t5_emb_path) if t5_emb_path else (self.data_root / "meta" / "t5_embeddings.pkl")
-            if _pkl.exists():
-                with open(_pkl, "rb") as f:
+            pkl_path = pathlib.Path(t5_emb_path) if t5_emb_path else (self.data_root / "meta" / "t5_embeddings.pkl")
+            if pkl_path.exists():
+                with open(pkl_path, "rb") as f:
                     self._t5_embs = pickle.load(f)
-                # build task_index → task_str mapping from tasks.jsonl
-                _tasks_file = self.data_root / "meta" / "tasks.jsonl"
+                tasks_file = self.data_root / "meta" / "tasks.jsonl"
                 self._task_index_to_str: dict[int, str] = {
-                    t["task_index"]: t["task"]
-                    for t in (json.loads(l) for l in _tasks_file.read_text().strip().splitlines())
+                    task["task_index"]: task["task"]
+                    for task in (json.loads(line) for line in tasks_file.read_text().strip().splitlines())
                 }
                 print(
                     f"[LeRobotLiberoDataset] Loaded T5 embeddings for "
-                    f"{len(self._t5_embs)} tasks from {_pkl}"
+                    f"{len(self._t5_embs)} tasks from {pkl_path}"
                 )
             else:
                 self._t5_embs = None
                 warnings.warn(
-                    f"[LeRobotLiberoDataset] T5 embeddings not found at {_pkl}. "
+                    f"[LeRobotLiberoDataset] T5 embeddings not found at {pkl_path}. "
                     "Text conditioning will use zero embeddings. "
                     "Run: python scripts/precompute_libero_t5.py"
                 )
-
-    # ── dataset interface ─────────────────────────────────────────────────────
 
     def __len__(self) -> int:
         return len(self._windows)
@@ -241,82 +237,63 @@ class LeRobotLiberoDataset(Dataset):
             try:
                 return self._load_sample(index)
             except Exception:
-                warnings.warn(
-                    f"[LeRobotLiberoDataset] error at index={index} (attempt {attempt})"
-                )
+                warnings.warn(f"[LeRobotLiberoDataset] error at index={index} (attempt {attempt})")
                 warnings.warn(traceback.format_exc())
                 index = int(np.random.randint(len(self)))
         return self._load_sample(index)
 
-    # ── internals ─────────────────────────────────────────────────────────────
-
     def _load_sample(self, index: int) -> dict:
         file_path, start_t = self._windows[index]
 
-        # Sample delay d ∈ [0, max_delay-1]
-        d = int(np.random.randint(0, self.max_delay))
-        pred_t = start_t + d + 1
+        d = int(np.random.randint(TRAIN_DELAY_MIN, self.sampled_delay_max + 1))
+        pred_t = start_t + d
 
-        # Load the full episode parquet (small file, ~10–15 MB per episode)
         df = pd.read_parquet(file_path)
 
-        # Decode the two needed frames for each camera
-        cam1_t    = _decode_image(df[_CAM1_KEY].iloc[start_t])  # [H, W, 3]
-        cam2_t    = _decode_image(df[_CAM2_KEY].iloc[start_t])  # [H, W, 3]
-        cam1_pred = _decode_image(df[_CAM1_KEY].iloc[pred_t])   # [H, W, 3]
-        cam2_pred = _decode_image(df[_CAM2_KEY].iloc[pred_t])   # [H, W, 3]
+        cam1_t = _decode_image(df[self._cam1_key].iloc[start_t])
+        cam2_t = _decode_image(df[self._cam2_key].iloc[start_t])
+        cam1_pred = _decode_image(df[self._cam1_key].iloc[pred_t])
+        cam2_pred = _decode_image(df[self._cam2_key].iloc[pred_t])
 
-        # Action at t+d
-        act = np.asarray(df[_ACT_KEY].iloc[start_t + d], dtype=np.float32)  # [7]
-
-        # Build paired 5-frame videos (state_t=2, num_conditional_frames=1)
-        # View sample layout:
-        # Frame 0    : current view frame          (latent 0 – cond)
-        # Frames 1-4 : predicted future frame ×4  (latent 1 – predicted)
-        cam1_imgs = np.stack(
-            [cam1_t, cam1_pred, cam1_pred, cam1_pred, cam1_pred],
+        act_seq = np.stack(
+            [np.asarray(df[self._action_key].iloc[start_t + offset], dtype=np.float32) for offset in range(d)],
             axis=0,
-        )  # [5, H, W, 3]
-        cam2_imgs = np.stack(
-            [cam2_t, cam2_pred, cam2_pred, cam2_pred, cam2_pred],
-            axis=0,
-        )  # [5, H, W, 3]
-        paired_imgs = np.stack([cam1_imgs, cam2_imgs], axis=0)  # [2, 5, H, W, 3]
+        )
 
-        # → [2, 3, 5, H, W] uint8 (strong paired batch: [cam1, cam2])
+        cam1_imgs = np.stack([cam1_t, cam1_pred, cam1_pred, cam1_pred, cam1_pred], axis=0)
+        cam2_imgs = np.stack([cam2_t, cam2_pred, cam2_pred, cam2_pred, cam2_pred], axis=0)
+        paired_imgs = np.stack([cam1_imgs, cam2_imgs], axis=0)
         video = torch.from_numpy(paired_imgs.astype(np.uint8)).permute(0, 4, 1, 2, 3)
 
-        # Action with normalised delay → [1, 8]
-        d_norm = float(d) / float(max(self.max_delay - 1, 1))
-        action_vec = np.concatenate([act, np.array([d_norm], dtype=np.float32)])
-        action = torch.from_numpy(action_vec).unsqueeze(0).repeat(2, 1)  # [2, 8]
-        action = action.unsqueeze(1)  # [2, 1, 8]
+        action_seq = pack_masked_action_sequence(actions=act_seq, delay=d, chunk_len=self.max_delay)
+        delay_scalar = normalize_delay_scalar(delay=d, max_delay=self.delay_normalization_max)
+        action = torch.from_numpy(action_seq).unsqueeze(0).repeat(2, 1, 1)
+        delay_scalar = torch.from_numpy(delay_scalar).unsqueeze(0).repeat(2, 1)
 
-        # Metadata
         task_index = int(df["task_index"].iloc[0])
-        ep_index   = int(df["episode_index"].iloc[0])
+        episode_index = int(df["episode_index"].iloc[0])
         key = [
-            f"libero_spatial/ep{ep_index:04d}/t{start_t:04d}_d{d}_cam1",
-            f"libero_spatial/ep{ep_index:04d}/t{start_t:04d}_d{d}_cam2",
+            f"{self._dataset_key_prefix}/ep{episode_index:04d}/t{start_t:04d}_d{d}_cam1",
+            f"{self._dataset_key_prefix}/ep{episode_index:04d}/t{start_t:04d}_d{d}_cam2",
         ]
 
-        # T5 text embedding: (512, 1024) float32 — DataLoader stacks to (B, 512, 1024)
         if self._t5_embs is not None:
             task_str = self._task_index_to_str[task_index]
-            t5_emb = self._t5_embs[task_str].squeeze(0).float()  # (512, 1024)
+            t5_emb = self._t5_embs[task_str].squeeze(0).float()
         else:
             t5_emb = torch.zeros(512, 1024, dtype=torch.float32)
-        t5_emb = t5_emb.unsqueeze(0).repeat(2, 1, 1)  # [2, 512, 1024]
+        t5_emb = t5_emb.unsqueeze(0).repeat(2, 1, 1)
 
         return {
-            "video": video,                                    # [2, 3, 5, 256, 256] uint8
-            "action": action,                                  # [2, 1, 8] float32
+            "video": video,
+            "action": action,
+            "delay_scalar": delay_scalar,
             "__key__": key,
             "fps": torch.full((2,), 10.0, dtype=torch.float32),
             "image_size": (256 * torch.ones(2, 4)).cuda(),
             "num_frames": self.sequence_length,
             "padding_mask": torch.zeros(2, 1, 256, 256).cuda(),
-            "t5_text_embeddings": t5_emb,                      # [2, 512, 1024] float32
+            "t5_text_embeddings": t5_emb,
         }
 
 

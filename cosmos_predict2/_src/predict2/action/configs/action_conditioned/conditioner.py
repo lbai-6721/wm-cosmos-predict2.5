@@ -222,6 +222,7 @@ class Video2WorldConditionerV2(GeneralConditioner):
 @dataclass(frozen=True)
 class ActionConditionedCondition(Video2WorldCondition):
     action: Optional[torch.Tensor] = None
+    delay_scalar: Optional[torch.Tensor] = None
 
 
 class ActionConditionedConditioner(Video2WorldConditioner):
@@ -233,6 +234,8 @@ class ActionConditionedConditioner(Video2WorldConditioner):
         output = super()._forward(batch, override_dropout_rate)
         assert "action" in batch, "ActionConditionalConditioner requires 'action' in batch"
         output["action"] = batch["action"]
+        if "delay_scalar" in batch:
+            output["delay_scalar"] = batch["delay_scalar"]
         return ActionConditionedCondition(**output)
 
 
@@ -286,6 +289,12 @@ ActionConditionedConditionerConfig: LazyDict = L(ActionConditionedConditioner)(
     action=L(ReMapkey)(
         input_key="action",
         output_key="action",
+        dropout_rate=0.0,
+        dtype=None,
+    ),
+    delay_scalar=L(ReMapkey)(
+        input_key="delay_scalar",
+        output_key="delay_scalar",
         dropout_rate=0.0,
         dtype=None,
     ),

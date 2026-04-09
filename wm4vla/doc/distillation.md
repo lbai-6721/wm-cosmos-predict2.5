@@ -57,6 +57,8 @@ python scripts/convert_distcp_to_pt.py \
 | `use_clean_cond_timesteps` | 取决于 teacher 训练时的 `conditional_frame_timestep`：`-1.0` → `False`；`0.1`（wm-output 原始 teacher）→ `True` | ✅ 必须与 teacher 匹配 |
 | `teacher_guidance=0` | Teacher 纯条件训练，无 CFG，节省显存 | ✅ 必须 |
 | `text_encoder_config=None` | 使用数据中预计算的 T5 embedding | ✅ 必须 |
+| `action` / `delay_scalar` 接口 | 当前 teacher 使用 masked action prefix `action:[B,8,8]` + 独立 `delay_scalar:[B,1]`，不再把 delay 拼进单个 action 向量 | ✅ 必须匹配 |
+| `num_action_per_chunk=8` | Teacher 的 action encoder 现在消费固定长度 8 槽 prefix，而不是 `T=1` 的单步 action | ✅ LIBERO 必须 |
 | `fsdp_shard_size=4` | 4-GPU 单节点 | ✅ 必须 |
 | 采样器按整批更新 latent | paired 方案下 `B=2` 表示两个视角；若只更新 `latents[0]`，会导致 `cam2` 输出异常 | ✅ 必须 |
 
@@ -85,7 +87,9 @@ paired 5 帧方案下，蒸馏评估/推理同样依赖底层采样器对整个 
 Teacher：iter_000008000/model_ema_bf16.pt（task0 任务）
 数据：lerobot_libero_dual_cam_256_task0_train
 条件帧：1 帧（每个 paired 视角样本各自的 view_t）
-action_dim：8
+action_dim：8（7-dim raw action + valid-mask）
+num_action_per_chunk：8
+delay_scalar：单独输入，不再拼入 action 最后一维
 ```
 
 ### Kinetix（128×128，9 帧，state_t=3）
@@ -101,6 +105,19 @@ action_dim：7
 ## 启动蒸馏训练
 
 入口配置文件：`cosmos_predict2/_src/interactive/configs/registry_predict2p5.py`
+
+注意：当前蒸馏侧必须与 teacher 训练接口完全一致，即 dataset / conditioner / student / teacher / fake-score 都要走：
+
+```text
+action       : [B, 8, 8]   # masked action prefix
+delay_scalar : [B, 1]
+```
+
+不能再使用旧版：
+
+```text
+action : [B, 1, 8]  # [a_{t+d} ; normalized_delay]
+```
 
 **LIBERO task0（4 GPU）：**
 

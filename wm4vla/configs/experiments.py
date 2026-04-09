@@ -15,6 +15,10 @@ from hydra.core.config_store import ConfigStore
 from cosmos_predict2._src.imaginaire.lazy_config import LazyDict
 from cosmos_predict2._src.imaginaire.utils.checkpoint_db import get_checkpoint_path
 from cosmos_predict2.config import MODEL_CHECKPOINTS, ModelKey
+from wm4vla.configs.wm_conditioning import (
+    ACTION_CHUNK_LEN,
+    LIBERO_ACTION_SLOT_DIM,
+)
 
 DEFAULT_CHECKPOINT = MODEL_CHECKPOINTS[ModelKey()]
 _WM4VLA_WAN21_VAE_PATH = os.getenv("WM4VLA_WAN21_VAE_PATH", "/home/kyji/public/models/lightx2v/vae/Wan2.1_VAE.pth")
@@ -223,8 +227,8 @@ def _libero_lerobot_256_base(
                         vae_pth=_WM4VLA_VAE_PATH,
                     ),
                     net=dict(
-                        action_dim=8,
-                        num_action_per_chunk=1,
+                        action_dim=LIBERO_ACTION_SLOT_DIM,
+                        num_action_per_chunk=ACTION_CHUNK_LEN,
                         use_crossattn_projection=False,
                     ),
                 ),

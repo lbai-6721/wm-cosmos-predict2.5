@@ -396,12 +396,13 @@ class Video2WorldInference:
     def _get_data_batch_input(
         self,
         video: torch.Tensor,
-        prompt: str,
+        prompt: str | list[str],
         num_conditional_frames: int = 1,
         negative_prompt: str = _DEFAULT_NEGATIVE_PROMPT,
         use_neg_prompt: bool = True,
         camera: CameraConditionInputs | None = None,
         action: torch.Tensor | None = None,
+        delay_scalar: torch.Tensor | None = None,
     ):
         """
         Prepares the input data batch for the diffusion model.
@@ -412,22 +413,50 @@ class Video2WorldInference:
 
         Args:
             video (torch.Tensor): The input video tensor (B, C, T, H, W).
-            prompt (str): The text prompt for conditioning.
+            prompt (str | list[str]): The text prompt(s) for conditioning.
             num_conditional_frames (int): Number of conditional frames to use.
             negative_prompt (str, optional): Custom negative prompt.
             use_neg_prompt (bool, optional): Whether to include negative prompt embeddings. Defaults to True.
             camera (CameraConditionInputs | None): Optional typed camera metadata container.
             action: (torch.Tensor, optional) Target robot action for the K output videos, must be provided for action conditioned model.
+            delay_scalar: (torch.Tensor, optional) Global delay conditioning tensor.
 
         Returns:
             dict: A dictionary containing the prepared data batch, moved to the correct device and dtype.
         """
         B, C, T, H, W = video.shape
+        self.batch_size = B
+
+        if isinstance(prompt, str):
+            prompts = [prompt] * B
+        else:
+            prompts = list(prompt)
+            assert len(prompts) == B, f"Expected {B} prompts, got {len(prompts)}"
+
+        if isinstance(negative_prompt, str):
+            negative_prompts = [negative_prompt] * B
+        else:
+            negative_prompts = list(negative_prompt)
+            assert len(negative_prompts) == B, f"Expected {B} negative prompts, got {len(negative_prompts)}"
+
+        if action is not None:
+            if action.ndim == 1:
+                action = action.unsqueeze(0).unsqueeze(0)
+            elif action.ndim == 2:
+                action = action.unsqueeze(1)
+            assert action.shape[0] == B, f"Expected action batch {B}, got {action.shape}"
+        if delay_scalar is not None:
+            if delay_scalar.ndim == 0:
+                delay_scalar = delay_scalar.unsqueeze(0).unsqueeze(0)
+            elif delay_scalar.ndim == 1:
+                delay_scalar = delay_scalar.unsqueeze(1)
+            assert delay_scalar.shape[0] == B, f"Expected delay batch {B}, got {delay_scalar.shape}"
 
         data_batch = {
             "dataset_name": "video_data",
             "video": video,
-            "action": action.unsqueeze(0) if action is not None else None,
+            "action": action,
+            "delay_scalar": delay_scalar,
             "fps": torch.randint(16, 32, (self.batch_size,)).float(),  # Random FPS (might be used by model)
             "padding_mask": torch.zeros(self.batch_size, 1, H, W),  # Padding mask (assumed no padding here)
             "num_conditional_frames": num_conditional_frames,  # Specify number of conditional frames
@@ -449,20 +478,20 @@ class Video2WorldInference:
 
         # Compute text embeddings
         if self.model.text_encoder is not None:
-            data_batch["ai_caption"] = [prompt]
+            data_batch["ai_caption"] = prompts
             data_batch["t5_text_embeddings"] = self.model.text_encoder.compute_text_embeddings_online(
-                data_batch={"ai_caption": [prompt], "images": None},
+                data_batch={"ai_caption": prompts, "images": None},
                 input_caption_key="ai_caption",
             )
             if use_neg_prompt:
                 data_batch["neg_t5_text_embeddings"] = self.model.text_encoder.compute_text_embeddings_online(
-                    data_batch={"ai_caption": [negative_prompt], "images": None},
+                    data_batch={"ai_caption": negative_prompts, "images": None},
                     input_caption_key="ai_caption",
                 )
         else:
-            data_batch["t5_text_embeddings"] = get_text_embedding(prompt)
+            data_batch["t5_text_embeddings"] = get_text_embedding(prompts)
             if use_neg_prompt:
-                data_batch["neg_t5_text_embeddings"] = get_text_embedding(negative_prompt)
+                data_batch["neg_t5_text_embeddings"] = get_text_embedding(negative_prompts)
 
         # Move tensors to GPU and convert to bfloat16 if they are floating point
         for k, v in data_batch.items():
@@ -473,7 +502,7 @@ class Video2WorldInference:
 
     def generate_vid2world(
         self,
-        prompt: str,
+        prompt: str | list[str],
         input_path: str | torch.Tensor | None,
         guidance: int = 7,
         num_video_frames: int = 77,
@@ -485,6 +514,7 @@ class Video2WorldInference:
         negative_prompt: str = _DEFAULT_NEGATIVE_PROMPT,
         camera: CameraConditionInputs | None = None,
         action: torch.Tensor | None = None,
+        delay_scalar: torch.Tensor | None = None,
         num_steps: int = 35,
     ):
         """
@@ -494,7 +524,7 @@ class Video2WorldInference:
         model sampling, and decodes the result into a video tensor.
 
         Args:
-            prompt: The text prompt describing the desired video content/style.
+            prompt: The text prompt(s) describing the desired video content/style.
             input_path: Path to the input image or video file or a torch.Tensor.
             guidance: Classifier-free guidance scale. Defaults to 7.
             num_video_frames: Number of video frames to generate. Defaults to 77.
@@ -504,6 +534,7 @@ class Video2WorldInference:
             negative_prompt: Custom negative prompt. Defaults to the predefined default negative prompt.
             camera: CameraConditionInputs containing extrinsics, intrinsics, and optional image size metadata.
             action: Target robot action for the K output videos. Must be provided if model is action conditioned.
+            delay_scalar: Global delay conditioning tensor for action-conditioned models.
             num_steps: Number of generation steps. Defaults to 35.
             offload_diffusion_model: If True, offload diffusion model to CPU to save GPU memory. Defaults to False.
             offload_text_encoder: If True, offload text encoder to CPU to save GPU memory. Defaults to False.
@@ -568,6 +599,7 @@ class Video2WorldInference:
             prompt=prompt,
             camera=camera,
             action=action,
+            delay_scalar=delay_scalar,
             num_conditional_frames=num_latent_conditional_frames,
             negative_prompt=negative_prompt,
             use_neg_prompt=True,

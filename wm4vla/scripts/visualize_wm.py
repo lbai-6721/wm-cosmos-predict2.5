@@ -41,6 +41,12 @@ import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
+from wm4vla.conditioning import normalize_delay_scalar, pack_masked_action_sequence
+from wm4vla.configs.wm_conditioning import (
+    BYPASS_WM_WHEN_DELAY_ZERO,
+    DEFAULT_EVAL_DELAYS,
+    INFER_DELAY_MAX,
+)
 
 # ── 常量 ──────────────────────────────────────────────────────────────────
 _CAM1_KEY = "observation.images.image"
@@ -57,7 +63,7 @@ _CONFIG_FILE      = "cosmos_predict2/_src/predict2/action/configs/action_conditi
 _NUM_LATENT_COND  = 1    # state_t=2 → 1 conditioning latent frame
 _NUM_VIDEO_FRAMES = 5    # 1 + (2-1)×4 = 5 pixel frames
 _RESOLUTION       = "256,256"
-_MAX_DELAY        = 5
+_MAX_DELAY        = INFER_DELAY_MAX
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────
@@ -126,6 +132,18 @@ def build_input_video(cam1_t: np.ndarray, cam2_t: np.ndarray) -> torch.Tensor:
     cam2_frames = np.stack([cam2_t, blank, blank, blank, blank], axis=0)
     paired = np.stack([cam1_frames, cam2_frames], axis=0)  # [2, 5, H, W, 3]
     return torch.from_numpy(paired).permute(0, 4, 1, 2, 3)  # [2, 3, 5, H, W]
+
+
+def build_action_inputs(action_rows: np.ndarray, delay: int) -> tuple[torch.Tensor, torch.Tensor]:
+    packed = pack_masked_action_sequence(
+        actions=action_rows,
+        delay=delay,
+        chunk_len=_MAX_DELAY,
+    )
+    delay_scalar = normalize_delay_scalar(delay=delay, max_delay=_MAX_DELAY)
+    action = torch.from_numpy(packed).float().unsqueeze(0).repeat(2, 1, 1)
+    delay_tensor = torch.from_numpy(delay_scalar).float().unsqueeze(0).repeat(2, 1)
+    return action, delay_tensor
 
 
 # ── Val split ──────────────────────────────────────────────────────────────
@@ -200,7 +218,7 @@ def main(args):
 
     data_root = args.data_root or _DEFAULT_DATA_ROOT
     val_eps = sample_val_episodes(data_root, args.n_episodes, args.seed, task_indices=task_indices)
-    delays = [args.delay] if args.delay else [1, 2, 3, 4]
+    delays = [args.delay] if args.delay is not None else [d for d in DEFAULT_EVAL_DELAYS if 1 <= d <= 4]
 
     for ep_path in val_eps:
         ep_name = ep_path.stem
@@ -209,7 +227,7 @@ def main(args):
         task_index = int(df["task_index"].iloc[0])
         prompt = f"libero spatial task {task_index}"
 
-        valid_starts = list(range(T - _MAX_DELAY))
+        valid_starts = list(range(T - _MAX_DELAY + 1))
         if not valid_starts:
             print(f"[skip] {ep_name}: too short (T={T})")
             continue
@@ -222,32 +240,33 @@ def main(args):
         print(f"\n[{ep_name}] task={task_index}  start_t={start_t}  T={T}")
 
         for d in delays:
-            pred_t = start_t + d + 1
+            pred_t = start_t + d
             if pred_t >= T:
                 continue
 
-            act_raw = np.asarray(df[_ACT_KEY].iloc[start_t + d], dtype=np.float32)
-            d_norm = float(d) / float(_MAX_DELAY - 1)
-            action = (
-                torch.from_numpy(np.concatenate([act_raw, [d_norm]])).float()
-                .unsqueeze(0).repeat(2, 1).unsqueeze(1)
-            )  # [2, 1, 8]
-
             print(f"  d={d}: 推理 ({args.num_steps} steps) …", end="", flush=True)
-            with torch.no_grad():
-                video_out = wm.generate_vid2world(
-                    prompt=[prompt, prompt],
-                    input_path=vid_input,
-                    action=action,
-                    guidance=args.guidance,
-                    num_video_frames=_NUM_VIDEO_FRAMES,
-                    num_latent_conditional_frames=_NUM_LATENT_COND,
-                    resolution=_RESOLUTION,
-                    seed=args.seed,
-                    num_steps=args.num_steps,
+            if d == 0 and BYPASS_WM_WHEN_DELAY_ZERO:
+                video_out = vid_input.float() / 127.5 - 1.0
+            else:
+                action_rows = np.stack(
+                    [np.asarray(df[_ACT_KEY].iloc[start_t + offset], dtype=np.float32) for offset in range(d)],
+                    axis=0,
                 )
+                action, delay_scalar = build_action_inputs(action_rows, delay=d)
+                with torch.no_grad():
+                    video_out = wm.generate_vid2world(
+                        prompt=[prompt, prompt],
+                        input_path=vid_input,
+                        action=action,
+                        delay_scalar=delay_scalar,
+                        guidance=args.guidance,
+                        num_video_frames=_NUM_VIDEO_FRAMES,
+                        num_latent_conditional_frames=_NUM_LATENT_COND,
+                        resolution=_RESOLUTION,
+                        seed=args.seed,
+                        num_steps=args.num_steps,
+                    )
             print(" 完成")
-            # video_out: [2, 3, 5, 256, 256], float [-1, 1]
 
             # 分别提取 cam1 与 cam2 的 5 帧序列，再横向拼接便于对比观察
             cam1_frames = video_tensor_to_frames(video_out, batch_idx=0)

@@ -155,7 +155,7 @@
 
 - 在 `make_experiment` 函数签名中新增 `tokenizer: str = "wan2pt1_tokenizer"` 参数
 - 默认值 `"wan2pt1_tokenizer"` 保持向后兼容，存量 Bridge 实验不受影响
-- wm4vla 蒸馏实验传入 `"wan2pt2_tokenizer"`，与 teacher 训练时使用的 VAE 保持一致
+- wm4vla 蒸馏实验传入 `"wan2pt1_tokenizer"`，与当前 teacher 训练实际使用的 VAE 保持一致
 
 ### 8.2 新增两个蒸馏实验配置
 
@@ -165,7 +165,7 @@
 
 | 实验名 | 分辨率 | 帧数 | state_t | action_dim | 条件帧数 |
 |--------|--------|------|---------|------------|---------|
-| `dmd2_trigflow_distill_wm_libero_lerobot_256_task0` | 256×256 | 17 帧 | 5 | 8 | 3（blank + cam1_t + cam2_t） |
+| `dmd2_trigflow_distill_wm_libero_lerobot_256_task0` | 256×256 | 5 帧 | 2 | 8 | 1（每个 paired 样本各自的 `view_t`） |
 | `dmd2_trigflow_distill_wm_kinetix_128_9frame` | 128×128 | 9 帧 | 3 | 7 | 2（blank + obs_t） |
 
 **与原 Bridge 实验相比，关键差异配置及原因：**
@@ -180,7 +180,13 @@
 | `text_encoder_config` | `None` | 使用数据 batch 中预计算的 T5 embedding，无需在线编码器 |
 | `fsdp_shard_size` | `4` | 4-GPU 单节点，不能超过 GPU 数量 |
 | `net.use_crossattn_projection` | `False` | 与 teacher 训练架构一致 |
-| `num_action_per_chunk` | `1` | 与 teacher 训练一致（非 action-chunk 模型） |
+| `num_action_per_chunk` | `8` | 当前 LIBERO teacher 使用 8 槽 masked action prefix |
+
+当前 LIBERO 蒸馏还必须同步新的条件接口：
+
+- `action: [B, 8, 8]`，每个 slot 为 `[raw_action(7), valid_mask]`
+- `delay_scalar: [B, 1]` 独立输入
+- 旧版 `action: [B, 1, 8] = [a_{t+d}; normalized_delay]` 只用于兼容历史实验，不再是主线 teacher 语义
 
 网络类型均使用 `cosmos_v1_2B_action_conditioned_{student/teacher/fake_score}`（对应 `ActionConditionedMinimalV1LVGDiT`），与 wm4vla teacher 架构匹配。
 

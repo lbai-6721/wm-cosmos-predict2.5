@@ -86,6 +86,13 @@ import pandas as pd
 import torch
 from PIL import Image
 
+from wm4vla.conditioning import normalize_delay_scalar, pack_masked_action_sequence
+from wm4vla.configs.wm_conditioning import (
+    BYPASS_WM_WHEN_DELAY_ZERO,
+    DEFAULT_EVAL_DELAYS,
+    INFER_DELAY_MAX,
+)
+
 # ── 可选依赖（不影响主要指标）──────────────────────────────────────────────
 try:
     from skimage.metrics import structural_similarity as _ssim_fn
@@ -118,7 +125,7 @@ _CONFIG_FILE      = "cosmos_predict2/_src/predict2/action/configs/action_conditi
 _NUM_LATENT_COND  = 1    # state_t=2 → 1 conditioning latent frame
 _NUM_VIDEO_FRAMES = 5    # 1 + (2-1)×4 = 5 pixel frames
 _RESOLUTION       = "256,256"
-_MAX_DELAY        = 5    # d ∈ [0, max_delay-1] during training
+_MAX_DELAY        = INFER_DELAY_MAX
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -144,6 +151,19 @@ def _tensor_to_uint8(t: torch.Tensor) -> np.ndarray:
     img = ((t.float() + 1.0) / 2.0).clamp(0, 1)  # → [0, 1]
     img = (img * 255.0).to(torch.uint8)
     return img.permute(1, 2, 0).cpu().numpy()  # → (H, W, 3)
+
+
+def build_action_inputs(action_rows: np.ndarray, delay: int, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Pack the action prefix and global delay scalar for inference."""
+    packed = pack_masked_action_sequence(
+        actions=action_rows,
+        delay=delay,
+        chunk_len=_MAX_DELAY,
+    )
+    delay_scalar = normalize_delay_scalar(delay=delay, max_delay=_MAX_DELAY)
+    action = torch.from_numpy(packed).float().unsqueeze(0).repeat(batch_size, 1, 1)
+    delay_tensor = torch.from_numpy(delay_scalar).float().unsqueeze(0).repeat(batch_size, 1)
+    return action, delay_tensor
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -471,7 +491,7 @@ def evaluate(args):
     )
 
     # ── 5. 初始化指标容器 ─────────────────────────────────────────────────
-    delays = [1, 2, 3, 4]
+    delays = [d for d in DEFAULT_EVAL_DELAYS if 1 <= d <= 4]
     # 汇总指标：results[d]
     results = {d: defaultdict(list) for d in delays}
     # 按任务细分：results_per_task[task_idx][d]（多任务评估时展示各任务独立指标）
@@ -487,8 +507,10 @@ def evaluate(args):
     done = 0
     t_start = time.time()
 
-    print(f"\n开始评估，共 {total_windows} 个 (episode, start_t) × 4 delays = "
-          f"{total_windows * 4} 次推理 …\n")
+    print(
+        f"\n开始评估，共 {total_windows} 个 (episode, start_t) × {len(delays)} delays = "
+        f"{total_windows * len(delays)} 次推理 …\n"
+    )
 
     for ep_idx, (file_path, ep_task_index, start_ts) in enumerate(episode_samples):
         ep_name = file_path.stem  # e.g. "episode_000042"
@@ -517,7 +539,7 @@ def evaluate(args):
             vid_input = build_input_video(cam1_t, cam2_t)
 
             for d in delays:
-                pred_t = start_t + d + 1
+                pred_t = start_t + d
                 if pred_t >= T:
                     # 理论上 valid_starts 已保证合法，双重保险
                     continue
@@ -526,37 +548,35 @@ def evaluate(args):
                 cam1_gt = _decode_image(df[_CAM1_KEY].iloc[pred_t])
                 cam2_gt = _decode_image(df[_CAM2_KEY].iloc[pred_t])
 
-                # action: a_{t+d}，shape [7]
-                act_raw = np.asarray(df[_ACT_KEY].iloc[start_t + d], dtype=np.float32)
-                d_norm = float(d) / float(_MAX_DELAY - 1)  # d/(max_delay-1) = d/4
-                action_vec = np.concatenate([act_raw, [d_norm]])            # [8]
-                action = torch.from_numpy(action_vec).float().unsqueeze(0).repeat(2, 1).unsqueeze(1)  # [2, 1, 8]
-
-                # ── WM 推理 ─────────────────────────────────────────────
-                # generate_vid2world 内部：text_encoder_config=None 时调用
-                # get_text_embedding(prompt)，使用全局 cosmos_encoder 单例编码 prompt
-                time_video_start = time.time()
-                with torch.no_grad():
-                    video_out = wm.generate_vid2world(
-                        prompt=[prompt, prompt],
-                        input_path=vid_input,
-                        action=action,
-                        guidance=args.guidance,
-                        num_video_frames=_NUM_VIDEO_FRAMES,
-                        num_latent_conditional_frames=_NUM_LATENT_COND,
-                        resolution=_RESOLUTION,
-                        seed=args.seed,
-                        num_steps=args.num_steps,
+                if d == 0 and BYPASS_WM_WHEN_DELAY_ZERO:
+                    cam1_pred_t = cam1_t.copy()
+                    cam2_pred_t = cam2_t.copy()
+                    video_out = None
+                else:
+                    action_rows = np.stack(
+                        [np.asarray(df[_ACT_KEY].iloc[start_t + offset], dtype=np.float32) for offset in range(d)],
+                        axis=0,
                     )
-                # video_out: [2, 3, 5, 256, 256]，值域 [-1, 1]
-                time_video_end = time.time()
-                print(f"Time taken for video generation: {time_video_end - time_video_start} seconds")
-                # ── 提取预测帧 ──────────────────────────────────────────
-                # 5-frame paired layout (state_t=2, 1 cond latent):
-                # Batch 0 → cam1, frame 1 is the first predicted pixel frame
-                # Batch 1 → cam2, frame 1 is the first predicted pixel frame
-                cam1_pred_t = _tensor_to_uint8(video_out[0, :, 1])    # (H, W, 3)
-                cam2_pred_t = _tensor_to_uint8(video_out[1, :, 1])
+                    action, delay_scalar = build_action_inputs(action_rows, delay=d, batch_size=2)
+
+                    time_video_start = time.time()
+                    with torch.no_grad():
+                        video_out = wm.generate_vid2world(
+                            prompt=[prompt, prompt],
+                            input_path=vid_input,
+                            action=action,
+                            delay_scalar=delay_scalar,
+                            guidance=args.guidance,
+                            num_video_frames=_NUM_VIDEO_FRAMES,
+                            num_latent_conditional_frames=_NUM_LATENT_COND,
+                            resolution=_RESOLUTION,
+                            seed=args.seed,
+                            num_steps=args.num_steps,
+                        )
+                    time_video_end = time.time()
+                    print(f"Time taken for video generation: {time_video_end - time_video_start} seconds")
+                    cam1_pred_t = _tensor_to_uint8(video_out[0, :, 1])
+                    cam2_pred_t = _tensor_to_uint8(video_out[1, :, 1])
 
                 # ── 计算指标 ────────────────────────────────────────────
                 psnr1 = compute_psnr(cam1_pred_t, cam1_gt)

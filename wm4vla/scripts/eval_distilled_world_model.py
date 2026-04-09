@@ -61,6 +61,9 @@ import pandas as pd
 import torch
 from PIL import Image
 
+from wm4vla.conditioning import normalize_delay_scalar, pack_masked_action_sequence
+from wm4vla.configs.wm_conditioning import INFER_DELAY_MAX
+
 # ── 可选依赖（不影响主要指标）──────────────────────────────────────────────
 try:
     from skimage.metrics import structural_similarity as _ssim_fn
@@ -93,7 +96,7 @@ _DISTILL_CONFIG_FILE = "cosmos_predict2/_src/interactive/configs/registry_predic
 _NUM_LATENT_COND  = 1    # state_t=2 → 1 conditioning latent frames
 _NUM_VIDEO_FRAMES = 5    # 1 + (2-1)×4 = 5 pixel frames
 _RESOLUTION       = "256,256"
-_MAX_DELAY        = 5    # d ∈ [0, max_delay-1] during training
+_MAX_DELAY        = INFER_DELAY_MAX
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -331,6 +334,7 @@ def build_data_batch(
     vid_input: torch.Tensor,
     t5_emb: torch.Tensor,
     action: torch.Tensor,
+    delay_scalar: torch.Tensor,
 ) -> dict:
     """
     构建蒸馏模型推理所需的 data_batch。
@@ -338,7 +342,8 @@ def build_data_batch(
     Args:
         vid_input: [2, 3, 5, H, W] uint8 CPU tensor
         t5_emb:    [2, 512, 1024] float32 T5 embedding（或零张量）
-        action:    [2, 1, action_dim] float32 action vector
+        action:    [2, T, action_dim] float32 packed action prefix
+        delay_scalar: [2, 1] float32 normalized delay scalar
 
     Returns:
         dict: 所有 tensor 已移至 CUDA + bfloat16（浮点部分）
@@ -352,6 +357,7 @@ def build_data_batch(
         "num_conditional_frames": _NUM_LATENT_COND,
         "t5_text_embeddings": t5_emb,
         "action": action,
+        "delay_scalar": delay_scalar,
     }
     # All floating-point tensors except video (uint8) must be bfloat16 to match
     # model weights. padding_mask is especially critical: it gets torch.cat-ed with
@@ -361,6 +367,18 @@ def build_data_batch(
         if isinstance(v, torch.Tensor) and torch.is_floating_point(v):
             data_batch[k] = v.cuda().to(dtype=torch.bfloat16)
     return data_batch
+
+
+def build_action_inputs(action_rows: np.ndarray, delay: int, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
+    packed = pack_masked_action_sequence(
+        actions=action_rows,
+        delay=delay,
+        chunk_len=_MAX_DELAY,
+    )
+    delay_scalar = normalize_delay_scalar(delay=delay, max_delay=_MAX_DELAY)
+    action = torch.from_numpy(packed).float().unsqueeze(0).repeat(batch_size, 1, 1)
+    delay_tensor = torch.from_numpy(delay_scalar).float().unsqueeze(0).repeat(batch_size, 1)
+    return action, delay_tensor
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -473,21 +491,20 @@ def evaluate(args):
             vid_input = build_input_video(cam1_t, cam2_t)   # [2, 3, 5, H, W]
 
             for d in delays:
-                pred_t = start_t + d + 1
+                pred_t = start_t + d
                 if pred_t >= T_ep:
                     continue
 
                 cam1_gt = _decode_image(df[_CAM1_KEY].iloc[pred_t])
                 cam2_gt = _decode_image(df[_CAM2_KEY].iloc[pred_t])
 
-                # action: a_{t+d}，shape [7]，追加归一化 delay → [8]
-                act_raw = np.asarray(df[_ACT_KEY].iloc[start_t + d], dtype=np.float32)
-                d_norm = float(d) / float(_MAX_DELAY - 1)
-                action_vec = np.concatenate([act_raw, [d_norm]])
-                # network expects [B, T, D]；num_action_per_chunk=1 → T=1
-                action = torch.from_numpy(action_vec).float().unsqueeze(0).repeat(2, 1).unsqueeze(1)  # [2, 1, 8]
+                action_rows = np.stack(
+                    [np.asarray(df[_ACT_KEY].iloc[start_t + offset], dtype=np.float32) for offset in range(d)],
+                    axis=0,
+                )
+                action, delay_scalar = build_action_inputs(action_rows, delay=d, batch_size=2)
 
-                data_batch = build_data_batch(vid_input, t5_emb, action)
+                data_batch = build_data_batch(vid_input, t5_emb, action, delay_scalar)
 
                 # ── 对每个 num_steps 分别推理 ──────────────────────────
                 for ns in num_steps_list:

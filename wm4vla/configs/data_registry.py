@@ -32,14 +32,16 @@ def _collate_paired_view_batch(batch):
 
     Each dataset item already contains a strong paired mini-batch with shape:
       video: [2, 3, 5, H, W]
-      action: [2, 1, 8]
+      action: [2, max_delay, 8]
+      delay_scalar: [2, 1]
       ...
 
     When DataLoader batch_size = N, `batch` is a list of N such dicts.
     This collate function concatenates along the leading paired-view dimension
     so the trainer receives standard tensors:
       video: [2N, 3, 5, H, W]
-      action: [2N, 1, 8]
+      action: [2N, max_delay, 8]
+      delay_scalar: [2N, 1]
     """
     assert len(batch) > 0, "Empty batch is not allowed"
 
@@ -47,6 +49,7 @@ def _collate_paired_view_batch(batch):
     tensor_cat_keys = {
         "video",
         "action",
+        "delay_scalar",
         "fps",
         "image_size",
         "padding_mask",
