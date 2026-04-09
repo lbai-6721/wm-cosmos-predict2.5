@@ -260,29 +260,6 @@ JSON 结果按 `steps=N` → `d=D` 两级索引：
 }
 ```
 
-### 与 Teacher 基线对比
-
-Teacher 基线（35 步，4 GPU）使用 `eval_world_model.py` 评估，结果存于：
-
-```bash
-CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_world_model.py \
-    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt \
-    --task-indices 0 \
-    --experiment ac_libero_lerobot_256_pixels_2b_task0 \
-    --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
-    --num-steps 35 \
-    --output outputs/eval_wm/teacher_task0_35steps.json
-```
-
-典型蒸馏质量预期（仅供参考，实际值因训练步数而异）：
-
-| 模型 | 推理步数 | avg_PSNR（d=1） | 推理时间 |
-|------|---------|----------------|---------|
-| Teacher | 35 | 基线 | ~4000ms |
-| Student | 4 | 基线 -0.5~1dB | ~500ms |
-| Student | 2 | 基线 -1~2dB | ~250ms |
-| Student | 1 | 基线 -2~3dB | ~130ms |
-
 ## 调整提示
 
 - **batch_size**：当前设置 LIBERO=2，Kinetix=4。如显存不足可降低；如显存充裕可适当调高。
