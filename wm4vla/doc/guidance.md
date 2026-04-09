@@ -11,7 +11,7 @@ source /home/jikangye/workspace/tmp/lbai/cosmos-predict2.5/.venv/bin/activate
 export HF_ENDPOINT=https://hf-mirror.com
 
 # 所有训练输出的根目录
-export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_v3_light
+export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_libero_10_task0_test
 
 # LIBERO 数据路径（若做 LIBERO 蒸馏）
 export LEROBOT_LIBERO_DATA_ROOT=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/lerobot/lerobot--libero_10_image@v2.0
@@ -43,12 +43,13 @@ LIBERO 配置在 cosmos_predict2/_src/interactive/configs/registry_experiment/ex
 ```bash
 cd wm-cosmos-predict2.5
 
-CUDA_VISIBLE_DEVICES=0,2,3,4 torchrun \
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun \
   --nproc_per_node=4 \
   --master_port=12340 \
   -m scripts.train \
   --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
-  --experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 
+  -- \
+  experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0
 ```
 ## 蒸馏输出与 Checkpoint 转换
 

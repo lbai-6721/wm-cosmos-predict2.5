@@ -225,9 +225,9 @@ dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = make_experiment(
                 fsdp_shard_size=4,
                 # Use precomputed T5 embeddings from data batch
                 text_encoder_config=None,
-                # Use local tokenizer VAE to avoid S3 download (credentials/s3_training.secret not needed)
+                # Use Hugging Face tokenizer checkpoint so cache location follows HF_* env vars.
                 tokenizer=dict(
-                    vae_pth="/home/kyji/.cache/huggingface/hub/models--nvidia--Cosmos-Predict2.5-2B/snapshots/6787e176dce74a101d922174a95dba29fa5f0c55/tokenizer.pth",
+                    vae_pth="hf://nvidia/Cosmos-Predict2.5-2B/tokenizer.pth",
                 ),
                 net=dict(
                     action_dim=LIBERO_ACTION_SLOT_DIM,
@@ -313,9 +313,9 @@ dmd2_trigflow_distill_wm_kinetix_128_9frame = make_experiment(
                 fsdp_shard_size=4,
                 # Kinetix has no text condition (uses zero T5 embeddings from data batch)
                 text_encoder_config=None,
-                # Use local tokenizer VAE to avoid S3 download (credentials/s3_training.secret not needed)
+                # Use Hugging Face tokenizer checkpoint so cache location follows HF_* env vars.
                 tokenizer=dict(
-                    vae_pth="/home/kyji/.cache/huggingface/hub/models--nvidia--Cosmos-Predict2.5-2B/snapshots/6787e176dce74a101d922174a95dba29fa5f0c55/tokenizer.pth",
+                    vae_pth="hf://nvidia/Cosmos-Predict2.5-2B/tokenizer.pth",
                 ),
                 net=dict(
                     action_dim=7,
