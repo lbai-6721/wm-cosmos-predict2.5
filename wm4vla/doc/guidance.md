@@ -33,6 +33,9 @@ python scripts/convert_distcp_to_pt.py \
 # 输出：${CHECKPOINT_DIR}/model_ema_bf16.pt
 ```
 
+## 修改teacher checkpoint路径
+LIBERO 配置在 cosmos_predict2/_src/interactive/configs/registry_experiment/experiments_dmd2_ac_predict2p5.py:247 
+
 ## 蒸馏
 ```
 **LIBERO task0（4 GPU）：**
