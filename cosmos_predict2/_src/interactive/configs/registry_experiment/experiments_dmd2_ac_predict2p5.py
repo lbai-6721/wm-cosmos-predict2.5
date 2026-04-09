@@ -245,7 +245,8 @@ dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = make_experiment(
                     use_crossattn_projection=False,
                 ),
                 teacher_load_from=dict(
-                    load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/old_light/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000006000/model_ema_bf16.pt",
+                    load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm4vla-action-sequence-temporal-mlp-pool-6gpu-124567-20260407/checkpoint/model_ema_bf16.pt",
+                    #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/old_light/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000006000/model_ema_bf16.pt",
                     #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/single/libero-10_task0/12000/model_ema_bf16.pt",
                     #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt",
                     #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/reconstruct_new/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt",

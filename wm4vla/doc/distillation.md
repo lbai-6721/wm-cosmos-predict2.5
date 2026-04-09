@@ -21,7 +21,7 @@ Teacher 网络在整个蒸馏过程中保持冻结。
 export HF_ENDPOINT=https://hf-mirror.com
 
 # 所有训练输出的根目录
-export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_v3_light
+export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_final_mlp_20260409
 
 # LIBERO 数据路径（若做 LIBERO 蒸馏）
 export LEROBOT_LIBERO_DATA_ROOT=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/lerobot/lerobot--libero_10_image@v2.0
@@ -124,13 +124,12 @@ action : [B, 1, 8]  # [a_{t+d} ; normalized_delay]
 ```bash
 cd /home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5
 
-CUDA_VISIBLE_DEVICES=0,2,3,4 torchrun \
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun \
   --nproc_per_node=4 \
   --master_port=12340 \
   -m scripts.train \
   --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
-  -- experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 \
-  job.wandb_mode=disabled
+  --experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 \
 ```
   dataloader_train.batch_size=4 \
 
