@@ -21,7 +21,7 @@ Teacher 网络在整个蒸馏过程中保持冻结。
 export HF_ENDPOINT=https://hf-mirror.com
 
 # 所有训练输出的根目录
-export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_final_mlp_20260409
+export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm-distill-output/distill_final_mlp_20260410_afternoon
 
 # LIBERO 数据路径（若做 LIBERO 蒸馏）
 export LEROBOT_LIBERO_DATA_ROOT=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/lerobot/lerobot--libero_10_image@v2.0
@@ -162,9 +162,8 @@ ${IMAGINAIRE_OUTPUT_ROOT}/cosmos3_interactive/<experiment_name>/checkpoints/iter
 ```bash
 CHECKPOINTS_DIR=${IMAGINAIRE_OUTPUT_ROOT}/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
 
-CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5-new/output/wm-distill-output/distill_v3_light/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
-CHECKPOINT_ITER=iter_000011000
-#CHECKPOINT_ITER=$(cat ${CHECKPOINTS_DIR}/latest_checkpoint.txt)
+CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm-cosmos-predict2.5-test_10160410/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints
+CHECKPOINT_ITER=$(cat ${CHECKPOINTS_DIR}/latest_checkpoint.txt)
 
 python scripts/convert_distcp_to_pt.py \
   ${CHECKPOINTS_DIR}/${CHECKPOINT_ITER}/model \
@@ -221,20 +220,20 @@ CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
-    --ckpt ${CHECKPOINTS_DIR}/${CHECKPOINT_ITER}/model_ema_bf16.pt \
+    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm-cosmos-predict2.5-test_10160410/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000004000/model_ema_bf16.pt \
     --task-indices 0 \
     --num-steps 1 \
     --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
-    --save-images outputs/eval_distill/images_step1_nn \
-    --output outputs/eval_distill/task0_step1_nn.json
+    --save-images outputs/eval_distill/images_20260411 \
+    --output outputs/eval_distill/20260411.json
 
-CUDA_VISIBLE_DEVICES=5 python wm4vla/scripts/eval_distilled_world_model.py \
-    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5-new/output/wm-distill-output/distill_v3_light/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints/iter_000011000/model_ema_bf16.pt \
+CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
+    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm-cosmos-predict2.5-test_10160410/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000004000/model_ema_bf16.pt \
     --task-indices 0 \
     --num-steps 1 \
     --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
-    --save-images outputs/eval_distill/images_step1_light_test_env \
-    --output outputs/eval_distill/task0_step1_light_test_env.json
+    --save-images outputs/eval_distill/images_20260411_4 \
+    --output outputs/eval_distill/20260411_4.json
 ```
   
 ### 输出结果格式

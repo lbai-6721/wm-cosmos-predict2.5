@@ -21,11 +21,11 @@ from wm4vla.configs.wm_conditioning import (
 )
 
 DEFAULT_CHECKPOINT = MODEL_CHECKPOINTS[ModelKey()]
-_WM4VLA_WAN21_VAE_PATH = os.getenv("WM4VLA_WAN21_VAE_PATH", "/home/kyji/public/models/lightx2v/vae/Wan2.1_VAE.pth")
+_WM4VLA_WAN21_VAE_PATH = os.getenv("WM4VLA_WAN21_VAE_PATH", "s3://bucket/cosmos_diffusion_v2/pretrain_weights/tokenizer/wan2pt1/Wan2.1_VAE.pth")
 _WM4VLA_LIGHTVAE_PATH = os.getenv(
     "WM4VLA_LIGHTVAE_PATH", "/home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth"
 )
-_WM4VLA_VAE_BACKEND = os.getenv("WM4VLA_VAE_BACKEND", "lightvae").strip().lower()
+_WM4VLA_VAE_BACKEND = os.getenv("WM4VLA_VAE_BACKEND", "wan2pt1").strip().lower()
 _WM4VLA_VAE_PATH_BY_BACKEND = {
     "wan2pt1": _WM4VLA_WAN21_VAE_PATH,
     "lightvae": _WM4VLA_LIGHTVAE_PATH,
