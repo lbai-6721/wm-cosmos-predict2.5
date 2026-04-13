@@ -442,7 +442,7 @@ def evaluate(args):
     )
 
     # ── 5. 初始化指标容器 ─────────────────────────────────────────────────
-    delays = [1, 2, 3, 4]
+    delays = [1, 2, 3, 4, 5, 6, 7, 8]
     # results[num_steps][d]
     results_by_steps: Dict[int, Dict[int, defaultdict]] = {
         ns: {d: defaultdict(list) for d in delays}

@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
 from cosmos_predict2._src.imaginaire.lazy_config import LazyCall as L
+from wm4vla.configs.wm_conditioning import ACTION_CHUNK_LEN
 from wm4vla.datasets.dataset_kinetix import KinetixPixelDataset
 from wm4vla.datasets.dataset_libero import LiberoPixelDataset
 from wm4vla.datasets.dataset_lerobot_libero import LeRobotLiberoDataset
@@ -139,8 +140,8 @@ def register_wm4vla_data():
     # ── LIBERO LeRobot paired-view short-video (256×256, state_t=2) ─────────
     _lerobot_libero_data_root = os.environ.get(
         "LEROBOT_LIBERO_DATA_ROOT",
-        "/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/lerobot"
-        "/lerobot--libero_spatial_image@v2.0",
+        "/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/lerobot"
+        "/lerobot--libero_10_image@v2.0",
     )
     _t5_emb_path = os.environ.get("LEROBOT_LIBERO_T5_EMB_PATH", None)
 
@@ -148,12 +149,16 @@ def register_wm4vla_data():
         """Create a (train, val) dataset pair for LeRobot LIBERO."""
         train_ds = L(LeRobotLiberoDataset)(
             data_root=_lerobot_libero_data_root,
-            max_delay=5, val_ratio=0.1, mode="train", seed=0,
+            max_delay=ACTION_CHUNK_LEN,
+            delay_normalization_max=ACTION_CHUNK_LEN,
+            val_ratio=0.1, mode="train", seed=0,
             t5_emb_path=_t5_emb_path, task_indices=task_indices,
         )
         val_ds = L(LeRobotLiberoDataset)(
             data_root=_lerobot_libero_data_root,
-            max_delay=5, val_ratio=0.1, mode="val", seed=0,
+            max_delay=ACTION_CHUNK_LEN,
+            delay_normalization_max=ACTION_CHUNK_LEN,
+            val_ratio=0.1, mode="val", seed=0,
             t5_emb_path=_t5_emb_path, task_indices=task_indices,
         )
         train_dl = L(DataLoader)(

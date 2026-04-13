@@ -160,7 +160,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 --master_port=12342 -m 
 ## 9. checkpoint 转换
 
 ```bash
-CHECKPOINTS_DIR=/path/to/checkpoints
+CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/libero-10-task0-6gpu/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints
 CHECKPOINT_ITER=$(cat "${CHECKPOINTS_DIR}/latest_checkpoint.txt")
 
 python scripts/convert_distcp_to_pt.py \
