@@ -76,7 +76,8 @@ class DMD2Model(Cosmos2InteractiveModel):
 
         if self.config.load_teacher_weights:
             assert self.config.teacher_load_from.load_path, (
-                "A pretrained teacher model checkpoint is required for distillation"
+                "A pretrained teacher model checkpoint is required for distillation. "
+                "Pass it via model.config.teacher_load_from.load_path=/path/to/checkpoint"
             )
 
         self.net_teacher = self.build_net(self.config.net_teacher)

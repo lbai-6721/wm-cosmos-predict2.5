@@ -18,9 +18,14 @@ from hydra.core.config_store import ConfigStore
 from cosmos_predict2._src.imaginaire.lazy_config import LazyCall as L
 from cosmos_predict2._src.imaginaire.lazy_config import LazyDict
 from cosmos_predict2._src.predict2.tokenizers.wan2pt1 import Wan2pt1VAEInterface
+from cosmos_predict2._src.predict2.tokenizers.wan2pt1_lightvae import Wan2pt1LightVAEInterface
 from cosmos_predict2._src.predict2.tokenizers.wan2pt2 import Wan2pt2VAEInterface
 
 Wan2pt1VAEConfig: LazyDict = L(Wan2pt1VAEInterface)(name="wan2pt1_tokenizer")
+Wan2pt1LightVAEConfig: LazyDict = L(Wan2pt1LightVAEInterface)(
+    name="wan2pt1_lightvae_tokenizer",
+    use_batched_vae=True,
+)
 Wan2pt1VAEConfig_GCP: LazyDict = L(Wan2pt1VAEInterface)(
     name="wan2pt1_tokenizer_gcp",
     s3_credential_path="credentials/gcp_training.secret",
@@ -33,6 +38,12 @@ def register_tokenizer():
     cs = ConfigStore.instance()
     # Wan2pt1 and Wan2pt2 tokenizers
     cs.store(group="tokenizer", package="model.config.tokenizer", name="wan2pt1_tokenizer", node=Wan2pt1VAEConfig)
+    cs.store(
+        group="tokenizer",
+        package="model.config.tokenizer",
+        name="wan2pt1_lightvae_tokenizer",
+        node=Wan2pt1LightVAEConfig,
+    )
     cs.store(
         group="tokenizer", package="model.config.tokenizer", name="wan2pt1_tokenizer_gcp", node=Wan2pt1VAEConfig_GCP
     )

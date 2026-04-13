@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+from typing import Any
 
 import attrs
 import torch
@@ -27,25 +28,18 @@ from cosmos_predict2._src.imaginaire.utils.embedding_concat_strategy import (
     EmbeddingConcatStrategy as EmbeddingConcatStrategy,
 )
 from cosmos_predict2._src.predict2.models.utils import load_state_dict, load_state_dict_from_folder
-from cosmos_predict2._src.predict2.text_encoders.reason1 import QwenVLBaseModel
 from cosmos_predict2._src.reason1.configs.default.model_config_qwen import QwenModelConfig, QwenVisionConfig
 from cosmos_predict2._src.reason1.tokenizer.processor import build_tokenizer
 
 NUM_EMBEDDING_PADDING_TOKENS = 512
 
 
-@attrs.define(slots=False)
-class TextEncoderConfig:
-    """
-    Config for the text encoder model
-    """
+def _default_model_config():
+    # Delay importing the Qwen model so configs that only reference TextEncoderConfig
+    # do not require flash_attn during unrelated inference paths.
+    from cosmos_predict2._src.predict2.text_encoders.reason1 import QwenVLBaseModel
 
-    compute_online: bool = False
-    embedding_concat_strategy: str = str(EmbeddingConcatStrategy.MEAN_POOLING)
-    n_layers_per_group: int = 5
-    ckpt_path: str = "s3://bucket/cosmos_reasoning1/sft_exp700/sft_exp721-1_qwen7b_tl_721_5vs5_s3_balanced_n32_resume_16k/checkpoints/iter_000016000/model/"
-    s3_credential_path: str = "credentials/s3_checkpoint.secret"
-    model_config: QwenVLBaseModel = L(QwenVLBaseModel)(
+    return L(QwenVLBaseModel)(
         model_config=L(QwenModelConfig)(
             tokenizer_type="Qwen/Qwen2.5-VL-7B-Instruct",
             name_or_path="Qwen/Qwen2.5-VL-7B-Instruct",
@@ -64,6 +58,20 @@ class TextEncoderConfig:
             tokenizer_type="Qwen/Qwen2.5-VL-7B-Instruct",
         ),
     )
+
+
+@attrs.define(slots=False)
+class TextEncoderConfig:
+    """
+    Config for the text encoder model
+    """
+
+    compute_online: bool = False
+    embedding_concat_strategy: str = str(EmbeddingConcatStrategy.MEAN_POOLING)
+    n_layers_per_group: int = 5
+    ckpt_path: str = "s3://bucket/cosmos_reasoning1/sft_exp700/sft_exp721-1_qwen7b_tl_721_5vs5_s3_balanced_n32_resume_16k/checkpoints/iter_000016000/model/"
+    s3_credential_path: str = "credentials/s3_checkpoint.secret"
+    model_config: Any = attrs.field(factory=_default_model_config)
 
 
 class TextEncoder:

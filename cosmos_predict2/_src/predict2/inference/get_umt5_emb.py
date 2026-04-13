@@ -544,7 +544,7 @@ class UMT5EncoderModel:
         self,
         text_len=512,
         dtype=torch.bfloat16,
-        device=torch.cuda.current_device(),
+        device=None,
         checkpoint_path="s3://bucket/cosmos_diffusion_v2/pretrain_weights/models_t5_umt5-xxl-enc-bf16.pth",
         tokenizer_path="google/umt5-xxl",
         credential_path: Optional[str] = "credentials/s3_training.secret",
@@ -553,6 +553,8 @@ class UMT5EncoderModel:
         assert not enable_fsdp_shard, "FSDP is not supported for UMT5"
         self.text_len = text_len
         self.dtype = dtype
+        if device is None:
+            device = torch.cuda.current_device()
         self.device = device
 
         # init model

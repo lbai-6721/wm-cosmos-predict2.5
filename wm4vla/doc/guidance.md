@@ -2,18 +2,21 @@
 本仓库仅用于蒸馏学生模型，不用于训练教师模型，详细参考说明文档 wm-cosmos-predict2.5/wm4vla/doc/distillation.md
 
 ## 激活环境
+
 与训练教师模型环境一致
 ```
 source /home/jikangye/workspace/tmp/lbai/cosmos-predict2.5/.venv/bin/activate
 ```
+
 ## 环境变量
+
 ```
 export HF_ENDPOINT=https://hf-mirror.com
 
 # 所有训练输出的根目录
-export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5/wm-output/output/wm-distill-output/distill_libero_10_task0_test
+export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/wm-cosmos-predcit2.5/distill_libero_10_task0_test
 
-# LIBERO 数据路径（若做 LIBERO 蒸馏）
+# LIBERO 数据路径（根据实验设置数据集路径）
 export LEROBOT_LIBERO_DATA_ROOT=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/lerobot/lerobot--libero_10_image@v2.0
 export LEROBOT_LIBERO_T5_EMB_PATH=${LEROBOT_LIBERO_DATA_ROOT}/meta/t5_embeddings.pkl
 ```
@@ -43,13 +46,14 @@ LIBERO 配置在 cosmos_predict2/_src/interactive/configs/registry_experiment/ex
 ```bash
 cd wm-cosmos-predict2.5
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun \
-  --nproc_per_node=4 \
+CUDA_VISIBLE_DEVICES=0,1 torchrun \
+  --nproc_per_node=2 \
   --master_port=12340 \
   -m scripts.train \
   --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
   -- \
-  experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0
+  experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0  \
+  model.config.teacher_load_from.load_path=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm4vla-action-sequence-temporal-mlp-pool-6gpu-124567-20260407/checkpoint/model_ema_bf16.pt
 ```
 ## 蒸馏输出与 Checkpoint 转换
 
@@ -71,13 +75,32 @@ python scripts/convert_distcp_to_pt.py \
 # 输出：${CHECKPOINTS_DIR}/${CHECKPOINT_ITER}/model_ema_bf16.pt
 ```
 
-## 评估wm
+## 使用默认wan2pt1 vae评估
 ```
-CUDA_VISIBLE_DEVICES=5 python wm4vla/scripts/eval_distilled_world_model.py \
-    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5-new/output/wm-distill-output/distill_v3_light/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints/iter_000011000/model_ema_bf16.pt \
+CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
+    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm-distill-output/distill_final_mlp_20260410_afternoon/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints/iter_000002000/model_ema_bf16.pt \
     --task-indices 0 \
     --num-steps 1 \
     --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
-    --save-images outputs/eval_distill/images_step1_light_test_env \
-    --output outputs/eval_distill/task0_step1_light_test_env.json
+    --save-images outputs/eval_distill/images_20260413_afternoon \
+    --output outputs/eval_distill/20260413_afternoon.json
+```
+
+## 使用lightvae评估
+先在当前仓库上一级clone lightvae仓库
+```
+git clone https://github.com/ModelTC/LightX2V.git
+```
+
+```
+CUDA_VISIBLE_DEVICES=4 python wm4vla/scripts/eval_world_model.py \
+  --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm-distill-output/distill_final_mlp_20260410_afternoon/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints/iter_000002000/model_ema_bf16.pt \
+  --tokenizer-backend lightvae \
+  --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth \
+  --task-indices 0 \
+  --num-steps 1 \
+  --t5-emb-path ${LEROBOT_LIBERO_T5_EMB_PATH} \
+  --lightx2v-root /home/kyji/storage_net/tmp/lbai/LightX2V \
+  --save-images outputs/eval_distill/task0_lightvae_20260413 \
+  --output outputs/eval_wm/task0_lightvae_20260413.json
 ```

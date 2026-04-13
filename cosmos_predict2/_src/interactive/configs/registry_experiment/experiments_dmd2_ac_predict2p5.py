@@ -245,11 +245,9 @@ dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = make_experiment(
                     use_crossattn_projection=False,
                 ),
                 teacher_load_from=dict(
-                    load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm4vla-action-sequence-temporal-mlp-pool-6gpu-124567-20260407/checkpoint/model_ema_bf16.pt",
-                    #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/old_light/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000006000/model_ema_bf16.pt",
-                    #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/single/libero-10_task0/12000/model_ema_bf16.pt",
-                    #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt",
-                    #load_path="/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/reconstruct_new/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt",
+                    # Pass the teacher checkpoint path from the command line:
+                    # model.config.teacher_load_from.load_path=/path/to/model_ema_bf16.pt
+                    load_path="",
                     credentials=None,
                 ),
                 teacher_guidance=0,
@@ -377,6 +375,7 @@ torchrun --nproc_per_node=4 --master_port=12340 \
   -m scripts.train \
   --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
   -- experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 \
+  model.config.teacher_load_from.load_path=/path/to/model_ema_bf16.pt \
   job.wandb_mode=disabled
 
 Kinetix (128x128, 9 frames):
@@ -384,6 +383,7 @@ torchrun --nproc_per_node=4 --master_port=12342 \
   -m scripts.train \
   --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
   -- experiment=dmd2_trigflow_distill_wm_kinetix_128_9frame \
+  model.config.teacher_load_from.load_path=/path/to/model_ema_bf16.pt \
   job.wandb_mode=disabled
 
 2B (original Bridge):

@@ -124,13 +124,14 @@ action : [B, 1, 8]  # [a_{t+d} ; normalized_delay]
 ```bash
 cd /home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun \
-  --nproc_per_node=4 \
+CUDA_VISIBLE_DEVICES=0,1 torchrun \
+  --nproc_per_node=2 \
   --master_port=12340 \
   -m scripts.train \
   --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
   -- \
-  experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0 
+  experiment=dmd2_trigflow_distill_wm_libero_lerobot_256_task0  \
+  model.config.teacher_load_from.load_path=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm4vla-action-sequence-temporal-mlp-pool-6gpu-124567-20260407/checkpoint/model_ema_bf16.pt
 ```
 
 **Kinetix（4 GPU）：**
