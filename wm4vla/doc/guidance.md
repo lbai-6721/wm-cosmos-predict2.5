@@ -3,7 +3,20 @@
 
 ## 激活环境
 
-与训练教师模型环境一致
+激活环境
+```
+source /home/jikangye/workspace/tmp/lbai/wm-cosmos-predict2.5/.venv/bin/activate
+```
+或者新建环境
+```
+uv python install
+uv sync --extra=cu128
+source .venv/bin/activate
+
+uv pip install pyarrow
+uv pip install h5py
+```
+
 ```
 source /home/jikangye/workspace/tmp/lbai/cosmos-predict2.5/.venv/bin/activate
 ```
@@ -93,7 +106,7 @@ git clone https://github.com/ModelTC/LightX2V.git
 ```
 
 ```
-CUDA_VISIBLE_DEVICES=4 python wm4vla/scripts/eval_world_model.py \
+CUDA_VISIBLE_DEVICES=3 python wm4vla/scripts/eval_world_model.py \
   --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/wm-distill-output/distill_final_mlp_20260410_afternoon/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_libero_lerobot_256_task0/checkpoints/iter_000002000/model_ema_bf16.pt \
   --tokenizer-backend lightvae \
   --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth \
