@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """eval_distilled_world_model.py
 
-离线评估 DMD2 蒸馏后的 Action-Conditioned World Model（LIBERO task0）。
+离线评估 DMD2 蒸馏后的 Action-Conditioned World Model。
 
 与 eval_world_model.py 的主要区别：
   - 使用 DMD2 蒸馏实验配置（registry_predict2p5.py）加载模型
@@ -42,6 +42,14 @@
       --task-indices 0 \\
       --num-steps 4 \\
       --save-images outputs/eval_distill/images_step4
+
+  # 评估 pi_libero benchmark（自动切 experiment/data_root）
+  CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \\
+      --ckpt /path/to/distilled/model_ema_bf16.pt \\
+      --benchmark libero_10 \\
+      --num-steps 1 2 4 \\
+      --t5-emb-path ${PI_LIBERO_T5_EMB_PATH} \\
+      --output outputs/eval_distill/pi_libero_10_steps124.json
 """
 
 import argparse
@@ -63,6 +71,7 @@ from PIL import Image
 
 from wm4vla.conditioning import normalize_delay_scalar, pack_masked_action_sequence
 from wm4vla.configs.wm_conditioning import INFER_DELAY_MAX
+from wm4vla.datasets.dataset_pi_libero import PI_LIBERO_BENCHMARK_TASKS
 
 # ── 可选依赖（不影响主要指标）──────────────────────────────────────────────
 try:
@@ -81,22 +90,118 @@ except ImportError:
 
 
 # ── 常量（与训练/数据集一致）───────────────────────────────────────────────
-_CAM1_KEY = "observation.images.image"
-_CAM2_KEY = "observation.images.wrist_image"
-_ACT_KEY  = "action"
+_LEROBOT_CAM1_KEY = "observation.images.image"
+_LEROBOT_CAM2_KEY = "observation.images.wrist_image"
+_LEROBOT_ACT_KEY = "action"
 
-_DEFAULT_DATA_ROOT = (
-    "/home/kyji/public/dataset/lerobot"
-    "/lerobot--libero_10_image@v2.0"
+_PI_LIBERO_CAM1_KEY = "image"
+_PI_LIBERO_CAM2_KEY = "wrist_image"
+_PI_LIBERO_ACT_KEY = "actions"
+
+_LEROBOT_DEFAULT_DATA_ROOT = os.environ.get(
+    "LEROBOT_LIBERO_DATA_ROOT",
+    "/home/kyji/public/dataset/lerobot/lerobot--libero_10_image@v2.0",
 )
+_PI_LIBERO_DEFAULT_DATA_ROOT = os.environ.get(
+    "PI_LIBERO_DATA_ROOT",
+    "/mnt/storage/users/kyji_data/tmp/lbai/cosmos-predict2.5/physical-intelligence/libero",
+)
+
 # 蒸馏实验名（对应 experiments_dmd2_ac_predict2p5.py 中注册的名称）
-_DISTILL_EXPERIMENT_NAME = "dmd2_trigflow_distill_wm_libero_lerobot_256_task0"
+_LEROBOT_DISTILL_EXPERIMENT_NAME = "dmd2_trigflow_distill_wm_libero_lerobot_256_task0"
+_PI_LIBERO_DISTILL_EXPERIMENT_NAMES = {
+    None: "dmd2_trigflow_distill_wm_pi_libero_256_all",
+    "libero_10": "dmd2_trigflow_distill_wm_pi_libero_256_10",
+    "libero_goal": "dmd2_trigflow_distill_wm_pi_libero_256_goal",
+    "libero_object": "dmd2_trigflow_distill_wm_pi_libero_256_object",
+    "libero_spatial": "dmd2_trigflow_distill_wm_pi_libero_256_spatial",
+}
 _DISTILL_CONFIG_FILE = "cosmos_predict2/_src/interactive/configs/registry_predict2p5.py"
 
 _NUM_LATENT_COND  = 1    # state_t=2 → 1 conditioning latent frames
 _NUM_VIDEO_FRAMES = 5    # 1 + (2-1)×4 = 5 pixel frames
 _RESOLUTION       = "256,256"
 _MAX_DELAY        = INFER_DELAY_MAX
+
+
+def _normalize_pi_libero_benchmark(benchmark: Optional[str]) -> Optional[str]:
+    if benchmark in (None, "", "all"):
+        return None
+    if benchmark not in PI_LIBERO_BENCHMARK_TASKS:
+        valid = ", ".join(["all", *sorted(PI_LIBERO_BENCHMARK_TASKS)])
+        raise ValueError(f"Unknown benchmark {benchmark!r}; valid benchmarks: {valid}")
+    return benchmark
+
+
+def _resolve_task_filter(
+    benchmark: Optional[str],
+    task_indices: Optional[Sequence[int]],
+) -> Optional[set[int]]:
+    benchmark_tasks = None
+    if benchmark is not None:
+        benchmark_tasks = set(PI_LIBERO_BENCHMARK_TASKS[benchmark])
+
+    explicit_tasks = set(int(t) for t in task_indices) if task_indices is not None else None
+    if benchmark_tasks is None:
+        return explicit_tasks
+    if explicit_tasks is None:
+        return benchmark_tasks
+    return benchmark_tasks & explicit_tasks
+
+
+def _infer_dataset_format(args) -> str:
+    if args.dataset_format != "auto":
+        return args.dataset_format
+    if args.benchmark is not None:
+        return "pi_libero"
+    if args.experiment and "dmd2_trigflow_distill_wm_pi_libero_256_" in args.experiment:
+        return "pi_libero"
+    if args.data_root and (pathlib.Path(args.data_root) / "data" / "chunk-001").exists():
+        return "pi_libero"
+    return "lerobot"
+
+
+def _infer_experiment_name(
+    experiment: Optional[str],
+    dataset_format: str,
+    benchmark: Optional[str],
+) -> str:
+    if experiment:
+        return experiment
+    if dataset_format == "pi_libero":
+        return _PI_LIBERO_DISTILL_EXPERIMENT_NAMES[benchmark]
+    return _LEROBOT_DISTILL_EXPERIMENT_NAME
+
+
+def _get_dataset_paths(dataset_format: str) -> str:
+    if dataset_format == "pi_libero":
+        return _PI_LIBERO_DEFAULT_DATA_ROOT
+    return _LEROBOT_DEFAULT_DATA_ROOT
+
+
+def _get_dataset_keys(dataset_format: str) -> tuple[str, str, str]:
+    if dataset_format == "pi_libero":
+        return _PI_LIBERO_CAM1_KEY, _PI_LIBERO_CAM2_KEY, _PI_LIBERO_ACT_KEY
+    return _LEROBOT_CAM1_KEY, _LEROBOT_CAM2_KEY, _LEROBOT_ACT_KEY
+
+
+def _resolve_t5_emb_path(
+    requested_path: Optional[str],
+    dataset_format: str,
+    data_root: str,
+) -> Optional[str]:
+    if requested_path:
+        return requested_path
+
+    env_var = "PI_LIBERO_T5_EMB_PATH" if dataset_format == "pi_libero" else "LEROBOT_LIBERO_T5_EMB_PATH"
+    env_path = os.environ.get(env_var)
+    if env_path:
+        return env_path
+
+    candidate = pathlib.Path(data_root) / "meta" / "t5_embeddings.pkl"
+    if candidate.exists():
+        return str(candidate)
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -234,19 +339,28 @@ def build_val_episode_samples(
     max_delay: int = 5,
     samples_per_episode: int = 20,
     sample_seed: int = 42,
+    dataset_format: str = "lerobot",
+    benchmark: Optional[str] = None,
     task_indices: Optional[Sequence[int]] = None,
 ) -> List[tuple]:
     """
     复现训练时的 train/val episode 分割，返回 val 集采样表。
     （与 eval_world_model.py 完全相同的逻辑）
     """
-    data_dir = pathlib.Path(data_root) / "data" / "chunk-000"
+    data_dir = pathlib.Path(data_root) / "data"
     if not data_dir.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
-    all_files = sorted(data_dir.glob("episode_*.parquet"))
+    if dataset_format == "pi_libero":
+        all_files = sorted(data_dir.glob("chunk-*/episode_*.parquet"))
+    else:
+        chunk_dir = data_dir / "chunk-000"
+        if not chunk_dir.exists():
+            raise FileNotFoundError(f"Data directory not found: {chunk_dir}")
+        all_files = sorted(chunk_dir.glob("episode_*.parquet"))
+
     if not all_files:
-        raise FileNotFoundError(f"No episode parquet files in {data_dir}")
+        raise FileNotFoundError(f"No episode parquet files found under {data_dir}")
 
     rng_split = np.random.default_rng(split_seed)
     perm = rng_split.permutation(len(all_files))
@@ -256,19 +370,19 @@ def build_val_episode_samples(
     val_files = [all_files[i] for i in range(len(all_files)) if i in val_set]
     print(f"[data] Total episodes: {len(all_files)}, val episodes: {len(val_files)}")
 
-    if task_indices is not None:
-        task_indices_set = set(task_indices)
+    task_filter = _resolve_task_filter(benchmark=benchmark, task_indices=task_indices)
+    if task_filter is not None:
         filtered = []
         for fp in val_files:
             try:
                 df_meta = pd.read_parquet(fp, columns=["task_index"])
                 task_idx = int(df_meta["task_index"].iloc[0])
-                if task_idx in task_indices_set:
+                if task_idx in task_filter:
                     filtered.append(fp)
             except Exception:
                 filtered.append(fp)
         val_files = filtered
-        print(f"[data] After task filter ({task_indices}): {len(val_files)} episodes")
+        print(f"[data] After task filter ({sorted(task_filter)}): {len(val_files)} episodes")
 
     rng_sample = np.random.default_rng(sample_seed)
     episode_samples = []
@@ -280,7 +394,8 @@ def build_val_episode_samples(
             task_idx = -1
 
         try:
-            df_len = pd.read_parquet(fp, columns=[_ACT_KEY])
+            action_key = _get_dataset_keys(dataset_format)[2]
+            df_len = pd.read_parquet(fp, columns=[action_key])
             T = len(df_len)
         except Exception:
             continue
@@ -390,14 +505,19 @@ def evaluate(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
+    benchmark = _normalize_pi_libero_benchmark(args.benchmark)
+    dataset_format = _infer_dataset_format(args)
     task_indices: Optional[List[int]] = (
         [int(t) for t in args.task_indices] if args.task_indices else None
     )
-
     num_steps_list: List[int] = args.num_steps  # e.g. [1, 2, 4]
 
     # ── 1. 加载蒸馏模型 ──────────────────────────────────────────────────────
-    experiment_name = args.experiment or _DISTILL_EXPERIMENT_NAME
+    experiment_name = _infer_experiment_name(
+        experiment=args.experiment,
+        dataset_format=dataset_format,
+        benchmark=benchmark,
+    )
     model = load_distilled_model(str(args.ckpt), experiment_name)
 
     # ── 2. 可选：LPIPS 损失网络 ────────────────────────────────────────────
@@ -407,13 +527,20 @@ def evaluate(args):
         print("[info] LPIPS (AlexNet) loaded.")
 
     # ── 3. 加载任务描述 & T5 嵌入 ────────────────────────────────────────────
-    data_root = args.data_root or _DEFAULT_DATA_ROOT
+    data_root = args.data_root or _get_dataset_paths(dataset_format)
+    t5_emb_path = _resolve_t5_emb_path(args.t5_emb_path, dataset_format, data_root)
+    cam1_key, cam2_key, action_key = _get_dataset_keys(dataset_format)
+
+    print(f"[data] dataset_format={dataset_format}")
+    if dataset_format == "pi_libero":
+        print(f"[data] benchmark={benchmark or 'all'}")
+
     task_descriptions = load_task_descriptions(data_root)
 
     # T5 嵌入查找表：key = task 描述字符串，value = [1, 512, 1024]
     t5_cache: Dict[str, torch.Tensor] = {}
-    if args.t5_emb_path:
-        emb_dict = load_t5_embeddings(args.t5_emb_path)
+    if t5_emb_path:
+        emb_dict = load_t5_embeddings(t5_emb_path)
         if emb_dict is not None:
             for k, v in emb_dict.items():
                 t5_cache[str(k)] = torch.as_tensor(v, dtype=torch.float32)
@@ -438,6 +565,8 @@ def evaluate(args):
         max_delay=_MAX_DELAY,
         samples_per_episode=args.samples_per_episode,
         sample_seed=args.seed,
+        dataset_format=dataset_format,
+        benchmark=benchmark,
         task_indices=task_indices,
     )
 
@@ -472,7 +601,7 @@ def evaluate(args):
         ep_name = file_path.stem
 
         prompt = task_descriptions.get(ep_task_index, f"libero task {ep_task_index}")
-        t5_emb = _get_t5_emb(prompt)   # [1, 512, 1024]
+        t5_emb = _get_t5_emb(prompt)   # [2, 512, 1024]
 
         for ns in num_steps_list:
             if ep_task_index not in results_per_task_by_steps[ns]:
@@ -485,8 +614,8 @@ def evaluate(args):
         T_ep = len(df)
 
         for start_t in start_ts:
-            cam1_t = _decode_image(df[_CAM1_KEY].iloc[start_t])
-            cam2_t = _decode_image(df[_CAM2_KEY].iloc[start_t])
+            cam1_t = _decode_image(df[cam1_key].iloc[start_t])
+            cam2_t = _decode_image(df[cam2_key].iloc[start_t])
 
             vid_input = build_input_video(cam1_t, cam2_t)   # [2, 3, 5, H, W]
 
@@ -495,11 +624,11 @@ def evaluate(args):
                 if pred_t >= T_ep:
                     continue
 
-                cam1_gt = _decode_image(df[_CAM1_KEY].iloc[pred_t])
-                cam2_gt = _decode_image(df[_CAM2_KEY].iloc[pred_t])
+                cam1_gt = _decode_image(df[cam1_key].iloc[pred_t])
+                cam2_gt = _decode_image(df[cam2_key].iloc[pred_t])
 
                 action_rows = np.stack(
-                    [np.asarray(df[_ACT_KEY].iloc[start_t + offset], dtype=np.float32) for offset in range(d)],
+                    [np.asarray(df[action_key].iloc[start_t + offset], dtype=np.float32) for offset in range(d)],
                     axis=0,
                 )
                 action, delay_scalar = build_action_inputs(action_rows, delay=d, batch_size=2)
@@ -696,6 +825,8 @@ def evaluate(args):
         meta = {
             "ckpt": str(args.ckpt),
             "data_root": str(data_root),
+            "dataset_format": dataset_format,
+            "benchmark": benchmark if benchmark is not None else ("all" if dataset_format == "pi_libero" else None),
             "experiment": experiment_name,
             "task_indices": task_indices,
             "val_ratio": 0.1,
@@ -704,7 +835,7 @@ def evaluate(args):
             "samples_per_episode": args.samples_per_episode,
             "num_steps_evaluated": num_steps_list,
             "delays_evaluated": delays,
-            "t5_emb_path": str(args.t5_emb_path) if args.t5_emb_path else None,
+            "t5_emb_path": str(t5_emb_path) if t5_emb_path else None,
         }
         out = {"meta": meta, "results": summary}
         if per_task_summary:
@@ -724,7 +855,7 @@ def parse_args():
     p = argparse.ArgumentParser(
         description=(
             "Offline eval of DMD2-distilled Action-Conditioned World Model "
-            "(LIBERO, paired 5-frame layout, skip-dynamics)"
+            "(lerobot/pi_libero, paired 5-frame layout, skip-dynamics)"
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -734,23 +865,47 @@ def parse_args():
     )
     p.add_argument(
         "--data-root", type=str, default=None,
-        help=f"覆盖数据根目录。默认: {_DEFAULT_DATA_ROOT}",
+        help=(
+            "覆盖数据根目录。默认会随数据格式自动选择："
+            f"lerobot={_LEROBOT_DEFAULT_DATA_ROOT}，"
+            f"pi_libero={_PI_LIBERO_DEFAULT_DATA_ROOT}"
+        ),
+    )
+    p.add_argument(
+        "--dataset-format",
+        type=str,
+        choices=["auto", "lerobot", "pi_libero"],
+        default="auto",
+        help="数据格式。auto 会根据 --benchmark / --experiment / data_root 自动推断。",
     )
     p.add_argument(
         "--experiment", type=str, default=None,
         help=(
-            f"DMD2 实验名。默认: {_DISTILL_EXPERIMENT_NAME}"
+            "DMD2 实验名。默认会按数据格式自动推断："
+            f"lerobot={_LEROBOT_DISTILL_EXPERIMENT_NAME}，"
+            f"pi_libero(all)={_PI_LIBERO_DISTILL_EXPERIMENT_NAMES[None]}"
+        ),
+    )
+    p.add_argument(
+        "--benchmark",
+        type=str,
+        choices=["all", *sorted(PI_LIBERO_BENCHMARK_TASKS)],
+        default=None,
+        help=(
+            "仅对 pi_libero 有效：按 benchmark 过滤并自动推断 experiment。"
+            "可选 all/libero_10/libero_goal/libero_object/libero_spatial。"
         ),
     )
     p.add_argument(
         "--task-indices", type=int, nargs="+", default=None, metavar="TASK_IDX",
-        help="只评估指定任务（如 --task-indices 0）。不指定则评估全部。",
+        help="只评估指定任务（如 --task-indices 0）。pi_libero 下会与 --benchmark 取交集。",
     )
     p.add_argument(
         "--t5-emb-path", type=str, default=None,
         help=(
             "预计算 T5 embedding pkl 文件路径（scripts/precompute_libero_t5.py 生成）。"
-            "不提供时使用零向量（对 action-conditioned 蒸馏模型基本无影响）。"
+            "不提供时优先使用对应环境变量或 data_root/meta/t5_embeddings.pkl，"
+            "再回退到零向量。"
         ),
     )
     p.add_argument(

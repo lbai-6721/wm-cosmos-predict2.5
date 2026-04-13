@@ -16,6 +16,7 @@ from wm4vla.configs.wm_conditioning import ACTION_CHUNK_LEN
 from wm4vla.datasets.dataset_kinetix import KinetixPixelDataset
 from wm4vla.datasets.dataset_libero import LiberoPixelDataset
 from wm4vla.datasets.dataset_lerobot_libero import LeRobotLiberoDataset
+from wm4vla.datasets.dataset_pi_libero import PILiberoDataset
 
 
 def _get_sampler(dataset):
@@ -195,6 +196,65 @@ def register_wm4vla_data():
              name="lerobot_libero_dual_cam_256_task01_train", node=train_dl)
     cs.store(group="data_val", package="dataloader_val",
              name="lerobot_libero_dual_cam_256_task01_val", node=val_dl)
+
+    # ── physical-intelligence/libero paired-view short-video (256×256) ──────
+    _pi_libero_data_root = os.environ.get(
+        "PI_LIBERO_DATA_ROOT",
+        "/mnt/storage/users/kyji_data/tmp/lbai/cosmos-predict2.5/"
+        "physical-intelligence/libero",
+    )
+    _pi_t5_emb_path = os.environ.get("PI_LIBERO_T5_EMB_PATH", None)
+
+    def _pi_libero_pair(benchmark=None):
+        """Create a (train, val) dataset pair for physical-intelligence/libero."""
+        train_ds = L(PILiberoDataset)(
+            data_root=_pi_libero_data_root,
+            max_delay=ACTION_CHUNK_LEN,
+            delay_normalization_max=ACTION_CHUNK_LEN,
+            val_ratio=0.1, mode="train", seed=0,
+            t5_emb_path=_pi_t5_emb_path, benchmark=benchmark,
+        )
+        val_ds = L(PILiberoDataset)(
+            data_root=_pi_libero_data_root,
+            max_delay=ACTION_CHUNK_LEN,
+            delay_normalization_max=ACTION_CHUNK_LEN,
+            val_ratio=0.1, mode="val", seed=0,
+            t5_emb_path=_pi_t5_emb_path, benchmark=benchmark,
+        )
+        train_dl = L(DataLoader)(
+            dataset=train_ds,
+            sampler=L(_get_sampler)(dataset=train_ds),
+            batch_size=1, drop_last=True,
+            collate_fn=_collate_paired_view_batch,
+        )
+        val_dl = L(DataLoader)(
+            dataset=val_ds,
+            sampler=L(_get_sampler)(dataset=val_ds),
+            batch_size=1, drop_last=True,
+            collate_fn=_collate_paired_view_batch,
+        )
+        return train_dl, val_dl
+
+    for benchmark_name, store_prefix in [
+        (None, "pi_libero_all_256"),
+        ("libero_10", "pi_libero_10_256"),
+        ("libero_goal", "pi_libero_goal_256"),
+        ("libero_object", "pi_libero_object_256"),
+        ("libero_spatial", "pi_libero_spatial_256"),
+    ]:
+        train_dl, val_dl = _pi_libero_pair(benchmark=benchmark_name)
+        cs.store(
+            group="data_train",
+            package="dataloader_train",
+            name=f"{store_prefix}_train",
+            node=train_dl,
+        )
+        cs.store(
+            group="data_val",
+            package="dataloader_val",
+            name=f"{store_prefix}_val",
+            node=val_dl,
+        )
 
     # ── Kinetix pixel dataset (128×128, state_t=3) ──────────────────────────
     _kinetix_data_pixels_dir = os.environ.get(

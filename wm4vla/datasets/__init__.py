@@ -3,9 +3,11 @@
 from wm4vla.datasets.dataset_kinetix import KinetixPixelDataset
 from wm4vla.datasets.dataset_lerobot_libero import LeRobotLiberoDataset
 from wm4vla.datasets.dataset_libero import LiberoPixelDataset
+from wm4vla.datasets.dataset_pi_libero import PILiberoDataset
 
 __all__ = [
     "KinetixPixelDataset",
     "LeRobotLiberoDataset",
     "LiberoPixelDataset",
+    "PILiberoDataset",
 ]

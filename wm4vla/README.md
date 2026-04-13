@@ -8,8 +8,9 @@
 wm4vla/
 ├── datasets/                          # 数据集类
 │   ├── dataset_kinetix.py             # Kinetix skip-dynamics (128×128, 9帧)
-│   ├── dataset_lerobot_libero.py      # LIBERO LeRobot parquet (256×256, 17帧)
-│   └── dataset_libero.py             # LIBERO HDF5 (128×128, 13帧)
+│   ├── dataset_lerobot_libero.py      # LIBERO LeRobot parquet (256×256, 5帧 paired)
+│   ├── dataset_libero.py              # LIBERO HDF5 (128×128, 13帧)
+│   └── dataset_pi_libero.py           # physical-intelligence/libero parquet (256×256, 5帧 paired)
 │
 ├── configs/                           # Hydra 配置注册
 │   ├── experiments.py                 # 5个实验配置 (Kinetix / LIBERO / LeRobot)
@@ -17,7 +18,9 @@ wm4vla/
 │
 ├── scripts/                           # 工具脚本
 │   ├── precompute_libero_t5.py        # 预计算 T5 文本嵌入
+│   ├── train_distill_pi_libero.sh     # pi_libero 蒸馏启动脚本
 │   ├── eval_world_model.py            # 离线评估 (PSNR/SSIM/LPIPS)
+│   ├── eval_distilled_world_model.py  # 蒸馏模型离线评估
 │   └── visualize_wm.py               # WM 输出可视化
 │
 └── doc/                               # 文档
