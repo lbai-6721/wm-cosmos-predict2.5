@@ -208,6 +208,7 @@ def _make_wm_libero_distill_experiment(
     *,
     name: str,
     data_train: str,
+    data_val: str,
     teacher_ckpt_env_var: str,
     batch_size: int = 2,
 ) -> LazyDict:
@@ -287,6 +288,12 @@ def _make_wm_libero_distill_experiment(
             ),
         ),
     )
+    data_train_idx = next(
+        idx
+        for idx, item in enumerate(experiment["defaults"])
+        if item == {"override /data_train": data_train}
+    )
+    experiment["defaults"].insert(data_train_idx + 1, {"override /data_val": data_val})
     # Remove nested dataloaders structure inherited from make_experiment
     del experiment["dataloader_train"]["dataloaders"]
     return experiment
@@ -297,6 +304,7 @@ def _make_wm_libero_distill_experiment(
 dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = _make_wm_libero_distill_experiment(
     name="dmd2_trigflow_distill_wm_libero_lerobot_256_task0",
     data_train="lerobot_libero_dual_cam_256_task0_train",
+    data_val="lerobot_libero_dual_cam_256_task0_val",
     teacher_ckpt_env_var="WM4VLA_LIBERO_TASK0_TEACHER_CKPT",
 )
 
@@ -304,6 +312,7 @@ dmd2_trigflow_distill_wm_libero_lerobot_256_task0 = _make_wm_libero_distill_expe
 dmd2_trigflow_distill_wm_pi_libero_256_all = _make_wm_libero_distill_experiment(
     name="dmd2_trigflow_distill_wm_pi_libero_256_all",
     data_train="pi_libero_all_256_train",
+    data_val="pi_libero_all_256_val",
     teacher_ckpt_env_var="WM4VLA_PI_LIBERO_TEACHER_CKPT_ALL",
 )
 
@@ -311,6 +320,7 @@ dmd2_trigflow_distill_wm_pi_libero_256_all = _make_wm_libero_distill_experiment(
 dmd2_trigflow_distill_wm_pi_libero_256_10 = _make_wm_libero_distill_experiment(
     name="dmd2_trigflow_distill_wm_pi_libero_256_10",
     data_train="pi_libero_10_256_train",
+    data_val="pi_libero_10_256_val",
     teacher_ckpt_env_var="WM4VLA_PI_LIBERO_TEACHER_CKPT_10",
 )
 
@@ -318,6 +328,7 @@ dmd2_trigflow_distill_wm_pi_libero_256_10 = _make_wm_libero_distill_experiment(
 dmd2_trigflow_distill_wm_pi_libero_256_goal = _make_wm_libero_distill_experiment(
     name="dmd2_trigflow_distill_wm_pi_libero_256_goal",
     data_train="pi_libero_goal_256_train",
+    data_val="pi_libero_goal_256_val",
     teacher_ckpt_env_var="WM4VLA_PI_LIBERO_TEACHER_CKPT_GOAL",
 )
 
@@ -325,6 +336,7 @@ dmd2_trigflow_distill_wm_pi_libero_256_goal = _make_wm_libero_distill_experiment
 dmd2_trigflow_distill_wm_pi_libero_256_object = _make_wm_libero_distill_experiment(
     name="dmd2_trigflow_distill_wm_pi_libero_256_object",
     data_train="pi_libero_object_256_train",
+    data_val="pi_libero_object_256_val",
     teacher_ckpt_env_var="WM4VLA_PI_LIBERO_TEACHER_CKPT_OBJECT",
 )
 
@@ -332,6 +344,7 @@ dmd2_trigflow_distill_wm_pi_libero_256_object = _make_wm_libero_distill_experime
 dmd2_trigflow_distill_wm_pi_libero_256_spatial = _make_wm_libero_distill_experiment(
     name="dmd2_trigflow_distill_wm_pi_libero_256_spatial",
     data_train="pi_libero_spatial_256_train",
+    data_val="pi_libero_spatial_256_val",
     teacher_ckpt_env_var="WM4VLA_PI_LIBERO_TEACHER_CKPT_SPATIAL",
 )
 

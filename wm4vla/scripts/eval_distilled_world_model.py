@@ -44,12 +44,28 @@
       --save-images outputs/eval_distill/images_step4
 
   # 评估 pi_libero benchmark（自动切 experiment/data_root）
-  CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \\
-      --ckpt /path/to/distilled/model_ema_bf16.pt \\
-      --benchmark libero_10 \\
-      --num-steps 1 2 4 \\
-      --t5-emb-path ${PI_LIBERO_T5_EMB_PATH} \\
-      --output outputs/eval_distill/pi_libero_10_steps124.json
+  CUDA_VISIBLE_DEVICES=2 python wm4vla/scripts/eval_distilled_world_model.py \
+      --ckpt /home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_10_delay8_only_20000/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_10/checkpoints/iter_000011000/model_ema_bf16.pt \
+      --benchmark libero_10 \
+      --num-steps 1 \
+      --t5-emb-path /mnt/storage/users/kyji_data/tmp/lbai/cosmos-predict2.5/physical-intelligence/libero/meta/t5_embeddings.pkl \
+      --tokenizer-backend lightvae \
+      --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth \
+      --output outputs/eval_distill/libero_10_delay8_lightvae_20000_11000.json \
+      --save-images outputs/eval_distill/libero_10_delay8_lightvae_20000_11000
+
+      
+CUDA_VISIBLE_DEVICES=1 python wm4vla/scripts/eval_distilled_world_model.py \
+    --ckpt /home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_one_for_all_16000/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_all/checkpoints/iter_000002500/model_ema_bf16.pt \
+    --dataset-format lerobot \
+    --experiment dmd2_trigflow_distill_wm_libero_lerobot_256_task0 \
+    --task-indices 0 \
+    --num-steps 1 \
+    --t5-emb-path /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/lerobot/lerobot--libero_10_image@v2.0/meta/t5_embeddings.pkl \
+    --tokenizer-backend lightvae \
+    --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth \
+    --lightx2v-root /home/kyji/storage_net/tmp/lbai/LightX2V \
+    --output outputs/eval_distill/libero_10_task0_lightvae_2.json
 """
 
 import argparse
@@ -147,6 +163,22 @@ def _resolve_task_filter(
     if explicit_tasks is None:
         return benchmark_tasks
     return benchmark_tasks & explicit_tasks
+
+
+def _normalize_eval_delays(delays: Optional[Sequence[int]]) -> List[int]:
+    if not delays:
+        return list(range(1, _MAX_DELAY + 1))
+
+    normalized: List[int] = []
+    seen: set[int] = set()
+    for delay in delays:
+        d = int(delay)
+        if not 1 <= d <= _MAX_DELAY:
+            raise ValueError(f"Invalid delay {d}; expected 1 <= delay <= {_MAX_DELAY}")
+        if d not in seen:
+            normalized.append(d)
+            seen.add(d)
+    return normalized
 
 
 def _infer_dataset_format(args) -> str:
@@ -252,7 +284,13 @@ def compute_ssim(pred: np.ndarray, gt: np.ndarray) -> float:
 # 蒸馏模型加载
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_distilled_model(ckpt_path: str, experiment_name: str):
+def load_distilled_model(
+    ckpt_path: str,
+    experiment_name: str,
+    tokenizer_backend: str = "wan2pt1",
+    tokenizer_vae_pth: str = "",
+    lightx2v_root: str = "",
+):
     """
     用 DMD2 配置加载蒸馏后的 student 模型。
 
@@ -261,6 +299,9 @@ def load_distilled_model(ckpt_path: str, experiment_name: str):
     Args:
         ckpt_path: 本地 .pt checkpoint 路径（已通过 convert_distcp_to_pt.py 转换）
         experiment_name: DMD2 实验名（如 dmd2_trigflow_distill_wm_libero_lerobot_256_task0）
+        tokenizer_backend: tokenizer 后端，wan2pt1 或 lightvae。
+        tokenizer_vae_pth: 可选 VAE 权重路径覆盖。
+        lightx2v_root: 可选 LightX2V repo 根目录（仅 lightvae 使用）。
 
     Returns:
         model: 已加载 student EMA 权重的 DMD2Model，eval 模式
@@ -271,13 +312,42 @@ def load_distilled_model(ckpt_path: str, experiment_name: str):
     print("加载蒸馏模型 …")
     print(f"  ckpt        : {ckpt_path}")
     print(f"  experiment  : {experiment_name}")
+    print(f"  tokenizer   : {tokenizer_backend}")
+    if tokenizer_vae_pth:
+        print(f"  vae_pth     : {tokenizer_vae_pth}")
+    if lightx2v_root:
+        print(f"  lightx2v    : {lightx2v_root}")
     print(f"{'='*60}\n")
+
+    experiment_opts: List[str] = []
+    if tokenizer_backend == "lightvae":
+        experiment_opts.extend(
+            [
+                "tokenizer=wan2pt1_lightvae_tokenizer",
+                f"model.config.tokenizer.vae_pth={tokenizer_vae_pth}",
+            ]
+        )
+        if lightx2v_root:
+            experiment_opts.append(f"+model.config.tokenizer.lightx2v_root={lightx2v_root}")
+        print(f"[info] Tokenizer backend=lightvae, overrides: {experiment_opts}")
+    else:
+        if lightx2v_root:
+            print("[warn] --lightx2v-root is ignored when tokenizer backend is wan2pt1")
+        if tokenizer_vae_pth:
+            experiment_opts.extend(
+                [
+                    "tokenizer=wan2pt1_tokenizer",
+                    f"model.config.tokenizer.vae_pth={tokenizer_vae_pth}",
+                ]
+            )
+            print(f"[info] Tokenizer backend=wan2pt1, overrides: {experiment_opts}")
 
     model, _ = load_model_from_checkpoint(
         experiment_name=experiment_name,
         s3_checkpoint_dir=str(ckpt_path),
         config_file=_DISTILL_CONFIG_FILE,
         load_ema_to_reg=True,
+        experiment_opts=experiment_opts,
         skip_teacher_init=True,   # 推理不需要加载 teacher checkpoint
     )
     model.eval()
@@ -510,7 +580,12 @@ def evaluate(args):
     task_indices: Optional[List[int]] = (
         [int(t) for t in args.task_indices] if args.task_indices else None
     )
+    delays = _normalize_eval_delays(args.delays)
     num_steps_list: List[int] = args.num_steps  # e.g. [1, 2, 4]
+    tokenizer_backend = "lightvae" if args.use_lightvae else args.tokenizer_backend
+    tokenizer_vae_pth = args.tokenizer_vae_pth
+    if tokenizer_backend == "lightvae":
+        tokenizer_vae_pth = tokenizer_vae_pth or args.lightvae_pth
 
     # ── 1. 加载蒸馏模型 ──────────────────────────────────────────────────────
     experiment_name = _infer_experiment_name(
@@ -518,7 +593,13 @@ def evaluate(args):
         dataset_format=dataset_format,
         benchmark=benchmark,
     )
-    model = load_distilled_model(str(args.ckpt), experiment_name)
+    model = load_distilled_model(
+        str(args.ckpt),
+        experiment_name,
+        tokenizer_backend=tokenizer_backend,
+        tokenizer_vae_pth=tokenizer_vae_pth,
+        lightx2v_root=args.lightx2v_root,
+    )
 
     # ── 2. 可选：LPIPS 损失网络 ────────────────────────────────────────────
     lpips_fn = None
@@ -562,7 +643,7 @@ def evaluate(args):
         data_root=data_root,
         val_ratio=0.1,
         split_seed=0,           # 固定，与训练一致
-        max_delay=_MAX_DELAY,
+        max_delay=max(delays),
         samples_per_episode=args.samples_per_episode,
         sample_seed=args.seed,
         dataset_format=dataset_format,
@@ -571,7 +652,6 @@ def evaluate(args):
     )
 
     # ── 5. 初始化指标容器 ─────────────────────────────────────────────────
-    delays = [1, 2, 3, 4, 5, 6, 7, 8]
     # results[num_steps][d]
     results_by_steps: Dict[int, Dict[int, defaultdict]] = {
         ns: {d: defaultdict(list) for d in delays}
@@ -642,7 +722,7 @@ def evaluate(args):
                     time_start = time.perf_counter()
                     with torch.no_grad():
                         if torch.cuda.is_available():
-                            torch.cuda.synchronize()
+                           torch.cuda.synchronize()
                         time_inference_start = time.perf_counter()
                         latents = model.generate_samples_from_batch(
                             data_batch,
@@ -836,6 +916,9 @@ def evaluate(args):
             "num_steps_evaluated": num_steps_list,
             "delays_evaluated": delays,
             "t5_emb_path": str(t5_emb_path) if t5_emb_path else None,
+            "tokenizer_backend": tokenizer_backend,
+            "tokenizer_vae_pth": str(tokenizer_vae_pth) if tokenizer_vae_pth else None,
+            "lightx2v_root": str(args.lightx2v_root) if tokenizer_backend == "lightvae" and args.lightx2v_root else None,
         }
         out = {"meta": meta, "results": summary}
         if per_task_summary:
@@ -917,6 +1000,13 @@ def parse_args():
         ),
     )
     p.add_argument(
+        "--delays", type=int, nargs="+", default=None, metavar="D",
+        help=(
+            "评估的 delay 列表，可指定多个（如 --delays 1 2 4）或单个（--delays 8）。"
+            "不提供时默认评估 1..8。"
+        ),
+    )
+    p.add_argument(
         "--samples-per-episode", type=int, default=20,
         help="每个 val episode 随机抽取的 start_t 数量",
     )
@@ -934,6 +1024,29 @@ def parse_args():
             "可选：保存 pred vs GT 对比图片的目录。"
             "多个 num_steps 时仅对第一个步数保存图片。"
         ),
+    )
+    p.add_argument(
+        "--tokenizer-backend", type=str, choices=["wan2pt1", "lightvae"], default="wan2pt1",
+        help="Tokenizer backend for distilled evaluation inference.",
+    )
+    p.add_argument(
+        "--tokenizer-vae-pth", type=str, default="",
+        help=(
+            "Optional VAE checkpoint path override. "
+            "Works for both backends: wan2pt1/lightvae."
+        ),
+    )
+    p.add_argument(
+        "--use-lightvae", action="store_true",
+        help="Deprecated alias of --tokenizer-backend lightvae.",
+    )
+    p.add_argument(
+        "--lightvae-pth", type=str, default="/home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth",
+        help="LightVAE checkpoint path when --use-lightvae is enabled.",
+    )
+    p.add_argument(
+        "--lightx2v-root", type=str, default="",
+        help="Optional LightX2V repo root (used when lightx2v is not importable from PYTHONPATH).",
     )
     return p.parse_args()
 

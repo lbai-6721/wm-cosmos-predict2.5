@@ -5,10 +5,11 @@ set -euo pipefail
 : "${PI_LIBERO_DATA_ROOT:=/mnt/storage/users/kyji_data/tmp/lbai/cosmos-predict2.5/physical-intelligence/libero}"
 : "${PI_LIBERO_T5_EMB_PATH:=${PI_LIBERO_DATA_ROOT}/meta/t5_embeddings.pkl}"
 : "${BENCHMARK:=all}"
-: "${MASTER_PORT:=12340}"
+: "${MASTER_PORT:=12347}"
 : "${NPROC_PER_NODE:=4}"
 : "${CUDA_VISIBLE_DEVICES:=0,1,2,3}"
-: "${BATCH_SIZE:=16}"
+: "${BATCH_SIZE:=8}"
+: "${TEACHER_CKPT_OVERRIDE:=}"
 
 case "${BENCHMARK}" in
   all)
@@ -39,11 +40,16 @@ case "${BENCHMARK}" in
 esac
 
 : "${EXPERIMENT:=${DEFAULT_EXPERIMENT}}"
-TEACHER_CKPT="${TEACHER_CKPT:-${!TEACHER_ENV_VAR:-}}"
+if [[ -n "${TEACHER_CKPT:-}" && -z "${TEACHER_CKPT_OVERRIDE}" ]]; then
+  echo "[distill][pi_libero] ignoring legacy TEACHER_CKPT=${TEACHER_CKPT}" >&2
+  echo "[distill][pi_libero] use TEACHER_CKPT_OVERRIDE or ${TEACHER_ENV_VAR} instead" >&2
+fi
+
+TEACHER_CKPT="${TEACHER_CKPT_OVERRIDE:-${!TEACHER_ENV_VAR:-}}"
 
 if [[ -z "${TEACHER_CKPT}" ]]; then
   echo "Teacher checkpoint is required." >&2
-  echo "Set TEACHER_CKPT or ${TEACHER_ENV_VAR} before launching distillation." >&2
+  echo "Set TEACHER_CKPT_OVERRIDE or ${TEACHER_ENV_VAR} before launching distillation." >&2
   exit 1
 fi
 

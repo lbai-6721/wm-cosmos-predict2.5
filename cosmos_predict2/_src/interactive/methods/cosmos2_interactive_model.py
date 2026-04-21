@@ -466,6 +466,21 @@ class Cosmos2InteractiveModel(ImaginaireModel):
     def decode(self, latent: torch.Tensor) -> torch.Tensor:
         return self.tokenizer.decode(latent / self.sigma_data)
 
+    def _wm_debug_sync_cuda(self) -> None:
+        if not torch.cuda.is_available():
+            return
+        device = None
+        if hasattr(self, "tensor_kwargs"):
+            device = self.tensor_kwargs.get("device")
+        try:
+            torch.cuda.synchronize(device) if device is not None else torch.cuda.synchronize()
+        except (AssertionError, RuntimeError, ValueError):
+            torch.cuda.synchronize()
+
+    def _wm_debug_now(self) -> float:
+        self._wm_debug_sync_cuda()
+        return time.perf_counter()
+
     def model_param_stats(self) -> Dict[str, int]:
         """Return simple statistics about the student net parameters."""
         return {"total_learnable_param_num": self._param_count}
@@ -666,29 +681,43 @@ class Cosmos2InteractiveModel(ImaginaireModel):
         - When 'set_video_condition' is True, applies video2world temporal conditioning by sampling a
           shared number of conditional frames per example and setting the corresponding masks.
         """
+        wm_debug_total_start = self._wm_debug_now()
+        wm_debug_step_start = wm_debug_total_start
         self._normalize_video_databatch_inplace(data_batch)
         self._augment_image_dim_inplace(data_batch)
+        wm_debug_after_preprocess = self._wm_debug_now()
 
         is_image_batch = self.is_image_batch(data_batch)
         input_key = self.input_image_key if is_image_batch else self.input_data_key
         data_type = DataType.IMAGE if is_image_batch else DataType.VIDEO
+        print(
+            "[WM_DEBUG_TIMING] get_data_and_condition.preprocess "
+            f"elapsed={wm_debug_after_preprocess - wm_debug_step_start:.6f}s "
+            f"is_image_batch={is_image_batch} input_key={input_key} "
+            f"preprocessed={data_batch.get(IS_PREPROCESSED_KEY, False)}",
+            flush=True,
+        )
 
         # Video tokens
         raw_state = data_batch[input_key]  # raw video
-        #if raw_state.is_cuda:
-            #torch.cuda.synchronize(raw_state.device)
-        #time_encode_start = time.perf_counter()
+        wm_debug_step_start = self._wm_debug_now()
         latent_state = self.encode(raw_state).contiguous().float()  # latent state (i.e. video tokens)
-        #if raw_state.is_cuda:
-            #torch.cuda.synchronize(raw_state.device)
-        #time_encode_end = time.perf_counter()
-        #print(f"Encode time: {time_encode_end - time_encode_start} seconds")
+        wm_debug_after_encode = self._wm_debug_now()
+        print(
+            "[WM_DEBUG_TIMING] get_data_and_condition.encode "
+            f"elapsed={wm_debug_after_encode - wm_debug_step_start:.6f}s "
+            f"raw_shape={tuple(raw_state.shape)} raw_dtype={raw_state.dtype} raw_device={raw_state.device} "
+            f"latent_shape={tuple(latent_state.shape)} latent_dtype={latent_state.dtype} "
+            f"latent_device={latent_state.device} tokenizer={type(self.tokenizer).__module__}.{type(self.tokenizer).__qualname__}",
+            flush=True,
+        )
 
         # Text embeddings: reuse precomputed ones if provided (inference scripts often pass them),
         # otherwise compute online when enabled.
         # If compute_online is True and caption_key is available, always compute online
         # (delete precomputed embeddings to force online). This is for training where we want
         # to use online text encoder (e.g., Reason1) instead of precomputed T5 embeddings.
+        wm_debug_step_start = self._wm_debug_now()
         caption_key = getattr(self.config, "input_caption_key", self.input_caption_key)
         can_compute_online = (
             self.config.text_encoder_config is not None
@@ -707,8 +736,20 @@ class Cosmos2InteractiveModel(ImaginaireModel):
             # For legacy reason it's called t5_text_embeddings. Supports CR1 embeddings too.
             data_batch["t5_text_embeddings"] = text_embeddings
             data_batch["t5_text_mask"] = torch.ones(text_embeddings.shape[0], text_embeddings.shape[1], device="cuda")
+        wm_debug_after_text = self._wm_debug_now()
+        t5_emb = data_batch.get("t5_text_embeddings")
+        print(
+            "[WM_DEBUG_TIMING] get_data_and_condition.text "
+            f"elapsed={wm_debug_after_text - wm_debug_step_start:.6f}s "
+            f"can_compute_online={can_compute_online} has_t5={'t5_text_embeddings' in data_batch} "
+            f"t5_shape={tuple(t5_emb.shape) if isinstance(t5_emb, torch.Tensor) else None} "
+            f"t5_dtype={t5_emb.dtype if isinstance(t5_emb, torch.Tensor) else None} "
+            f"t5_device={t5_emb.device if isinstance(t5_emb, torch.Tensor) else None}",
+            flush=True,
+        )
 
         # Condition object: including the text embeddings and neg text embeddings (if provided)
+        wm_debug_step_start = self._wm_debug_now()
         if self.neg_embed is not None:
             data_batch["neg_t5_text_embeddings"] = repeat(
                 self.neg_embed.to(**self.tensor_kwargs),
@@ -720,8 +761,16 @@ class Cosmos2InteractiveModel(ImaginaireModel):
             condition, uncondition = self.conditioner.get_condition_uncondition(data_batch)
         condition = condition.edit_data_type(data_type)
         uncondition = uncondition.edit_data_type(data_type)
+        wm_debug_after_condition = self._wm_debug_now()
+        print(
+            "[WM_DEBUG_TIMING] get_data_and_condition.conditioner "
+            f"elapsed={wm_debug_after_condition - wm_debug_step_start:.6f}s "
+            f"neg_embed={self.neg_embed is not None} condition_type={type(condition).__qualname__}",
+            flush=True,
+        )
 
         # Update Condition object: set video condition masks etc. to support video2world mode.
+        wm_debug_step_start = self._wm_debug_now()
         if set_video_condition:
             num_conditional_frames = self._sample_num_conditional_frames(latent_state, data_batch)
             condition = self._configure_video_condition(
@@ -734,9 +783,17 @@ class Cosmos2InteractiveModel(ImaginaireModel):
                 latent_state=latent_state,
                 num_conditional_frames=num_conditional_frames,
             )
+        wm_debug_after_video_condition = self._wm_debug_now()
+        print(
+            "[WM_DEBUG_TIMING] get_data_and_condition.video_condition "
+            f"elapsed={wm_debug_after_video_condition - wm_debug_step_start:.6f}s "
+            f"set_video_condition={set_video_condition}",
+            flush=True,
+        )
 
         # Apply optional condition postprocessor (e.g., add the control inputs from
         # data batch to the condition object in Transfer2)
+        wm_debug_step_start = self._wm_debug_now()
         if self.condition_postprocessor is not None:
             condition, uncondition = self.condition_postprocessor(
                 model=self,
@@ -745,6 +802,18 @@ class Cosmos2InteractiveModel(ImaginaireModel):
                 latent_state=latent_state,
                 data_batch=data_batch,
             )
+        wm_debug_after_postprocessor = self._wm_debug_now()
+        print(
+            "[WM_DEBUG_TIMING] get_data_and_condition.postprocessor "
+            f"elapsed={wm_debug_after_postprocessor - wm_debug_step_start:.6f}s "
+            f"has_postprocessor={self.condition_postprocessor is not None}",
+            flush=True,
+        )
+        print(
+            "[WM_DEBUG_TIMING] get_data_and_condition.total "
+            f"elapsed={wm_debug_after_postprocessor - wm_debug_total_start:.6f}s",
+            flush=True,
+        )
 
         return raw_state, latent_state, condition, uncondition
 
@@ -1078,8 +1147,26 @@ class Cosmos2InteractiveModel(ImaginaireModel):
             num_steps (int): number of steps for the diffusion process
         """
         del kwargs
+        wm_debug_total_start = self._wm_debug_now()
+        debug_video = data_batch.get(getattr(self, "input_data_key", "video"))
+        debug_image = data_batch.get(getattr(self, "input_image_key", "image"))
+        debug_tensor = debug_video if isinstance(debug_video, torch.Tensor) else debug_image
+        debug_shape = tuple(debug_tensor.shape) if isinstance(debug_tensor, torch.Tensor) else None
+        debug_dtype = debug_tensor.dtype if isinstance(debug_tensor, torch.Tensor) else None
+        debug_device = debug_tensor.device if isinstance(debug_tensor, torch.Tensor) else None
+        print(
+            "[WM_DEBUG] HIT Cosmos2InteractiveModel.generate_samples_from_batch "
+            f"file={__file__} "
+            f"class={type(self).__module__}.{type(self).__qualname__} "
+            f"net_type={net_type} num_steps={num_steps} n_sample={n_sample} seed={seed} "
+            f"preprocessed={data_batch.get(IS_PREPROCESSED_KEY, False)} "
+            f"tensor_shape={debug_shape} tensor_dtype={debug_dtype} tensor_device={debug_device}",
+            flush=True,
+        )
+        wm_debug_step_start = self._wm_debug_now()
         self._normalize_video_databatch_inplace(data_batch)
         self._augment_image_dim_inplace(data_batch)
+        wm_debug_after_preprocess = self._wm_debug_now()
         is_image_batch = self.is_image_batch(data_batch)
         input_key = self.input_image_key if is_image_batch else self.input_data_key
         if n_sample is None:
@@ -1092,12 +1179,29 @@ class Cosmos2InteractiveModel(ImaginaireModel):
                 _H // self.tokenizer.spatial_compression_factor,
                 _W // self.tokenizer.spatial_compression_factor,
             ]  # type: ignore
+        print(
+            "[WM_DEBUG_TIMING] generate.preprocess_and_shape "
+            f"elapsed={wm_debug_after_preprocess - wm_debug_step_start:.6f}s "
+            f"input_key={input_key} n_sample={n_sample} state_shape={state_shape} "
+            f"video_shape={tuple(data_batch[input_key].shape)} "
+            f"video_dtype={data_batch[input_key].dtype} video_device={data_batch[input_key].device}",
+            flush=True,
+        )
 
+        wm_debug_step_start = self._wm_debug_now()
         x0_fn = self.get_x0_fn_from_batch(data_batch, net_type=net_type)
+        wm_debug_after_x0_setup = self._wm_debug_now()
+        print(
+            "[WM_DEBUG_TIMING] generate.get_x0_fn_from_batch "
+            f"elapsed={wm_debug_after_x0_setup - wm_debug_step_start:.6f}s",
+            flush=True,
+        )
 
+        wm_debug_step_start = self._wm_debug_now()
         generator = torch.Generator(device=self.tensor_kwargs["device"])
         generator.manual_seed(seed)
 
+        init_noise_was_none = init_noise is None
         if init_noise is None:
             init_noise = torch.randn(
                 n_sample,
@@ -1106,11 +1210,28 @@ class Cosmos2InteractiveModel(ImaginaireModel):
                 device=self.tensor_kwargs["device"],
                 generator=generator,
             )
+        wm_debug_after_noise = self._wm_debug_now()
+        print(
+            "[WM_DEBUG_TIMING] generate.init_noise "
+            f"elapsed={wm_debug_after_noise - wm_debug_step_start:.6f}s "
+            f"created={init_noise_was_none} shape={tuple(init_noise.shape)} "
+            f"dtype={init_noise.dtype} device={init_noise.device}",
+            flush=True,
+        )
 
+        wm_debug_step_start = self._wm_debug_now()
         if self.net.is_context_parallel_enabled:  # type: ignore
             init_noise = broadcast_split_tensor(init_noise, seq_dim=2, process_group=self.get_context_parallel_group())
+        wm_debug_after_cp_broadcast = self._wm_debug_now()
+        print(
+            "[WM_DEBUG_TIMING] generate.context_parallel_broadcast "
+            f"elapsed={wm_debug_after_cp_broadcast - wm_debug_step_start:.6f}s "
+            f"enabled={self.net.is_context_parallel_enabled}",
+            flush=True,
+        )
 
         # Sampling steps, teacher was trained with Rectified Flow, distillation uses TrigFlow
+        wm_debug_step_start = self._wm_debug_now()
         x = init_noise.to(torch.float64)
         ones = torch.ones(x.size(0), device=x.device, dtype=x.dtype)
         if net_type == "teacher":
@@ -1125,10 +1246,20 @@ class Cosmos2InteractiveModel(ImaginaireModel):
             t_steps = self.get_trigflow_sampling_timesteps(num_steps, self.config.timestep_shift)
         else:
             t_steps = self.config.selected_sampling_time[:num_steps] + [0]
+        wm_debug_after_timestep_setup = self._wm_debug_now()
+        print(
+            "[WM_DEBUG_TIMING] generate.timestep_setup "
+            f"elapsed={wm_debug_after_timestep_setup - wm_debug_step_start:.6f}s "
+            f"num_t_steps={len(t_steps)} t_steps={t_steps}",
+            flush=True,
+        )
 
         for idx, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):
+            wm_debug_step_start = self._wm_debug_now()
             x_t = x
+            wm_debug_x0_start = self._wm_debug_now()
             x0_pred = x0_fn(x_t.float(), t_cur * ones).to(torch.float64)
+            wm_debug_after_x0 = self._wm_debug_now()
             if net_type == "teacher":
                 t_cur_rf = t_steps_rf[idx]
                 t_next_rf = t_steps_rf[idx + 1]
@@ -1143,10 +1274,33 @@ class Cosmos2InteractiveModel(ImaginaireModel):
                 x = x0_pred
                 if t_next > 1e-5:
                     x = math.cos(t_next) * x / self.config.sigma_data + math.sin(t_next) * init_noise
+            wm_debug_after_step = self._wm_debug_now()
+            print(
+                "[WM_DEBUG_TIMING] generate.sampling_step "
+                f"idx={idx} t_cur={t_cur} t_next={t_next} "
+                f"x0_fn={wm_debug_after_x0 - wm_debug_x0_start:.6f}s "
+                f"update={wm_debug_after_step - wm_debug_after_x0:.6f}s "
+                f"total={wm_debug_after_step - wm_debug_step_start:.6f}s",
+                flush=True,
+            )
+        wm_debug_step_start = self._wm_debug_now()
         samples = x.float()
         if self.net.is_context_parallel_enabled:  # type: ignore
             samples = cat_outputs_cp(samples, seq_dim=2, cp_group=self.get_context_parallel_group())
-        return torch.nan_to_num(samples)
+        samples = torch.nan_to_num(samples)
+        wm_debug_after_finalize = self._wm_debug_now()
+        print(
+            "[WM_DEBUG_TIMING] generate.finalize "
+            f"elapsed={wm_debug_after_finalize - wm_debug_step_start:.6f}s "
+            f"samples_shape={tuple(samples.shape)} samples_dtype={samples.dtype} samples_device={samples.device}",
+            flush=True,
+        )
+        print(
+            "[WM_DEBUG_TIMING] generate.total "
+            f"elapsed={wm_debug_after_finalize - wm_debug_total_start:.6f}s",
+            flush=True,
+        )
+        return samples
 
     @staticmethod
     def get_rectified_flow_sampling_timesteps(num_steps: int, timestep_shift: float = 5.0) -> list[float]:

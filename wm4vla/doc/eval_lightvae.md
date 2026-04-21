@@ -35,7 +35,7 @@
 
 ```bash
 python wm4vla/scripts/eval_world_model.py \
-  --ckpt /path/to/model_ema_bf16.pt \
+  --ckpt /home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_one_for_all_16000/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_all/checkpoints/iter_000002500/model_ema_bf16.pt \
   --tokenizer-backend wan2pt1 \
   --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/Wan2.1_VAE.pth \
   --output outputs/eval_wm/task0_wan21.json
@@ -45,12 +45,35 @@ python wm4vla/scripts/eval_world_model.py \
 
 ```bash
 python wm4vla/scripts/eval_world_model.py \
-  --ckpt /path/to/model_ema_bf16.pt \
+  --ckpt /home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_one_for_all_16000/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_all/checkpoints/iter_000002500/model_ema_bf16.pt \
   --tokenizer-backend lightvae \
   --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth \
   --lightx2v-root /home/kyji/storage_net/tmp/lbai/LightX2V \
-  --output outputs/eval_wm/task0_lightvae.json
+  --output outputs/eval_wm/task0_lightvae_20260419.json
 ```
+
+评估单个delay
+```
+# 使用wan vae
+
+CKPT=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_10_delay8_only_30000/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_10/checkpoints/iter_000002500/model_ema_bf16.pt \
+OUTPUT=outputs/eval_distill/libero_10_delay8_wan_20260421.json \
+SAVE_IMAGES=outputs/eval_distill/libero_10_delay8_wan_imgs_20260421 \
+bash wm4vla/scripts/eval_distilled_delay8_pi_libero.sh
+
+# 使用lightvae
+
+CKPT=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_10_delay8_only_30000/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_10/checkpoints/iter_000002500/model_ema_bf16.pt \
+  BENCHMARK=10 \
+  TOKENIZER_BACKEND=lightvae \
+  LIGHTVAE_PTH=/home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth \
+  LIGHTX2V_ROOT=/home/kyji/storage_net/tmp/lbai/LightX2V \
+  OUTPUT=outputs/eval_distill/libero_10_delay8_lightvae_20260421.json \
+  SAVE_IMAGES=outputs/eval_distill/libero_10_delay8_lightvae_imgs_20260421 \
+  bash wm4vla/scripts/eval_distilled_delay8_pi_libero.sh
+
+```
+
 
 如需关闭 5D 批量路径（调试用）：
 

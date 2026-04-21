@@ -30,7 +30,7 @@ uv pip install h5py
 export HF_ENDPOINT=https://hf-mirror.com
 
 # 所有蒸馏输出的根目录
-export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/distill-output/wm-cosmos-predict2.5
+export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/distill-output/wm-cosmos-predict2.5/20260416_20000_pi_libero_10
 
 # pi_libero 主线路径
 export PI_LIBERO_DATA_ROOT=/mnt/storage/users/kyji_data/tmp/lbai/cosmos-predict2.5/physical-intelligence/libero
@@ -38,7 +38,7 @@ export PI_LIBERO_T5_EMB_PATH=${PI_LIBERO_DATA_ROOT}/meta/t5_embeddings.pkl
 
 # 对应 benchmark/all 的 teacher checkpoint
 export WM4VLA_PI_LIBERO_TEACHER_CKPT_ALL=/path/to/ac_pi_libero_256_pixels_2b_all/model_ema_bf16.pt
-export WM4VLA_PI_LIBERO_TEACHER_CKPT_10=/path/to/ac_pi_libero_256_pixels_2b_10/model_ema_bf16.pt
+export WM4VLA_PI_LIBERO_TEACHER_CKPT_10=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/benchmark/pi_libero_10/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_pi_libero_256_skip_dynamics_dual_cam_10/checkpoints/iter_000020000/model_ema_bf16.pt
 export WM4VLA_PI_LIBERO_TEACHER_CKPT_GOAL=/path/to/ac_pi_libero_256_pixels_2b_goal/model_ema_bf16.pt
 export WM4VLA_PI_LIBERO_TEACHER_CKPT_OBJECT=/path/to/ac_pi_libero_256_pixels_2b_object/model_ema_bf16.pt
 export WM4VLA_PI_LIBERO_TEACHER_CKPT_SPATIAL=/path/to/ac_pi_libero_256_pixels_2b_spatial/model_ema_bf16.pt
@@ -163,13 +163,16 @@ python scripts/convert_distcp_to_pt.py \
 评估 `pi_libero` benchmark：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python wm4vla/scripts/eval_distilled_world_model.py \
-  --ckpt ${CHECKPOINTS_DIR}/${CHECKPOINT_ITER}/model_ema_bf16.pt \
+export PI_LIBERO_DATA_ROOT=/mnt/storage/users/kyji_data/tmp/lbai/cosmos-predict2.5/physical-intelligence/libero
+export PI_LIBERO_T5_EMB_PATH=${PI_LIBERO_DATA_ROOT}/meta/t5_embeddings.pkl
+
+CUDA_VISIBLE_DEVICES=7 python wm4vla/scripts/eval_distilled_world_model.py \
+  --ckpt /home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_10_delay8_only_20000/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_10/checkpoints/iter_000001500/model_ema_bf16.pt \
   --benchmark libero_10 \
-  --num-steps 1 2 4 \
+  --num-steps 1 \
   --t5-emb-path ${PI_LIBERO_T5_EMB_PATH} \
-  --save-images outputs/eval_distill/pi_libero_10_steps124_imgs \
-  --output outputs/eval_distill/pi_libero_10_steps124.json 
+  --save-images outputs/eval_distill/pi_libero_10_delay8_only_wan_steps1_20000_1500_imgs \
+  --output outputs/eval_distill/pi_libero_10_delay8_only_wan_steps1_20000_1500.json 
 ```
 
 评估旧 `task0`：

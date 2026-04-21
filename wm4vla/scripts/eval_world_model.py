@@ -40,10 +40,10 @@ CUDA_VISIBLE_DEVICES=0 python scripts/eval_world_model.py \
     --experiment ac_libero_lerobot_256_pixels_2b_task0 \
     --t5-emb-path /home/kyji/public/dataset/lerobot/lerobot--libero_10_image@v2.0/meta/t5_embeddings.pkl \
     --num-steps 1 \
-    --tokenizer-backend wan2pt1 \
-    --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/Wan2.1_VAE.pth \
-    --save-images outputs/eval_wm_test/test_time_new/test_time_1_20260411/libero-10_task0_images \
-    --output outputs/eval_wm_test/test_time_new/test_time_1_20260411/libero-10_task0.json
+    --tokenizer-backend lightvae \
+    --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth \
+    --save-images outputs/eval_wm_test/test_time_new/test_time_1_20260416/libero-10_task0_images \
+    --output outputs/eval_wm_test/test_time_new/test_time_1_20260416/libero-10_task0.json
 
   # 评估全部 10 个任务
   python scripts/eval_world_model.py \\

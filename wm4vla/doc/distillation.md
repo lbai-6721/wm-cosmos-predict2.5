@@ -20,13 +20,13 @@ teacher 在蒸馏全过程中冻结。
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
-export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero
+export IMAGINAIRE_OUTPUT_ROOT=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_one_for_all_32000
 
 export PI_LIBERO_DATA_ROOT=/mnt/storage/users/kyji_data/tmp/lbai/cosmos-predict2.5/physical-intelligence/libero
 export PI_LIBERO_T5_EMB_PATH=${PI_LIBERO_DATA_ROOT}/meta/t5_embeddings.pkl
 
-export WM4VLA_PI_LIBERO_TEACHER_CKPT_ALL=/path/to/ac_pi_libero_256_pixels_2b_all/model_ema_bf16.pt
-export WM4VLA_PI_LIBERO_TEACHER_CKPT_10=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/benchmark/pi_libero_10/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_pi_libero_256_skip_dynamics_dual_cam_10/checkpoints/iter_000014000/model_ema_bf16.pt
+export WM4VLA_PI_LIBERO_TEACHER_CKPT_ALL=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/cosmos-predict-output/one_for_all/pi_libero_all/32000/model_ema_bf16.pt
+export WM4VLA_PI_LIBERO_TEACHER_CKPT_10=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/cosmos-predict-output/delay8_only/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_pi_libero_256_skip_dynamics_dual_cam_10/checkpoints/iter_000030000/model_ema_bf16.pt
 export WM4VLA_PI_LIBERO_TEACHER_CKPT_GOAL=/path/to/ac_pi_libero_256_pixels_2b_goal/model_ema_bf16.pt
 export WM4VLA_PI_LIBERO_TEACHER_CKPT_OBJECT=/path/to/ac_pi_libero_256_pixels_2b_object/model_ema_bf16.pt
 export WM4VLA_PI_LIBERO_TEACHER_CKPT_SPATIAL=/path/to/ac_pi_libero_256_pixels_2b_spatial/model_ema_bf16.pt
@@ -100,7 +100,35 @@ delay_scalar : [B, 1]
 | `dmd2_trigflow_distill_wm_pi_libero_256_object` | `pi_libero_object_256_train` |
 | `dmd2_trigflow_distill_wm_pi_libero_256_spatial` | `pi_libero_spatial_256_train` |
 
+## 与 Teacher 训练方式的对应关系
+
+teacher 侧 `pi_libero` 目前常用三种训练方式：
+
+1. 全量 `all`
+2. 单个 benchmark（`libero_10 / goal / object / spatial`）
+3. 固定 `delay=8`
+
+当前蒸馏链路的对应关系是：
+
+- `wm4vla/scripts/train_distill_pi_libero.sh` 对应方式 1/2。
+- `wm4vla/scripts/train_distill_delay8_pi_libero.sh` 对应方式 3。
+
+方式 1/2 与 teacher 的匹配点：
+
+- 使用同一套 benchmark 数据划分：`pi_libero_all_256_* / pi_libero_{10,goal,object,spatial}_256_*`
+- 条件接口一致：`action: [B, 8, 8]`、`delay_scalar: [B, 1]`
+- paired-view 5 帧输入、`state_t=2`、单条件帧、预计算 T5 条件保持一致
+
+需要注意：
+
+- teacher 的方式 1/2 通过 delay curriculum 从 `[1,2] -> ... -> [1,8]` 训练到最终 checkpoint
+- 当前蒸馏方式 1/2 不复现 curriculum，而是直接在最终接口上使用 `delay ∈ [1,8]` 的随机采样
+- 因此，蒸馏方式 1/2 与 **curriculum 终点的 teacher checkpoint** 匹配，而不是与 curriculum 中间阶段一一对应
+- 如果 teacher checkpoint 来自 `fixed_delay=8` 训练，则应使用下面的固定 delay 蒸馏脚本，而不是默认随机 delay 脚本
+
 ## 推荐启动方式
+
+### 蒸馏方式 1/2：随机 delay（匹配 all / benchmark teacher）
 
 优先使用统一脚本：
 
@@ -127,10 +155,37 @@ bash wm4vla/scripts/train_distill_pi_libero.sh
 
 也可以直接指定 teacher checkpoint：
 
+注意：统一脚本会忽略残留的通用 `TEACHER_CKPT`，以避免 shell 里的旧环境变量误覆盖当前 benchmark 的 teacher。若要显式覆盖，请使用 `TEACHER_CKPT_OVERRIDE`。
+
 ```bash
 BENCHMARK=goal \
-TEACHER_CKPT=/path/to/model_ema_bf16.pt \
+TEACHER_CKPT_OVERRIDE=/path/to/model_ema_bf16.pt \
 bash wm4vla/scripts/train_distill_pi_libero.sh
+```
+
+### 蒸馏方式 3：固定 `delay=8`
+
+当 teacher 来自 `wm4vla/scripts/train_wm_delay8_pi_libero.sh` 或等价的 `fixed_delay=8` 训练时，使用专用脚本：
+
+```bash
+cd /home/kyji/storage_net/tmp/lbai/wm-cosmos-predict2.5
+
+BENCHMARK=10 bash wm4vla/scripts/train_distill_delay8_pi_libero.sh
+```
+
+该脚本会自动设置：
+
+- `dataloader_train.dataset.fixed_delay=8`
+- `dataloader_val.dataset.fixed_delay=8`
+- `dataloader_train.dataset.sampled_delay_max=8`
+- `dataloader_val.dataset.sampled_delay_max=8`
+
+若要显式指定 delay-8 teacher checkpoint，推荐用 `TEACHER_CKPT_OVERRIDE`：
+
+```bash
+BENCHMARK=10 \
+TEACHER_CKPT_OVERRIDE=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/cosmos-predict-output/delay8_only/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_pi_libero_256_skip_dynamics_dual_cam_10/checkpoints/iter_000020000/model_ema_bf16.pt \
+bash wm4vla/scripts/train_distill_delay8_pi_libero.sh
 ```
 
 ## 直接 torchrun 启动
@@ -172,7 +227,7 @@ ${IMAGINAIRE_OUTPUT_ROOT}/cosmos3_interactive/<experiment_name>/checkpoints/iter
 转换为 `.pt`：
 
 ```bash
-CHECKPOINTS_DIR=${IMAGINAIRE_OUTPUT_ROOT}/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_10/checkpoints
+CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_10_delay8_only_20000/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_10/checkpoints
 CHECKPOINT_ITER=$(cat ${CHECKPOINTS_DIR}/latest_checkpoint.txt)
 
 python scripts/convert_distcp_to_pt.py \

@@ -108,6 +108,7 @@ class PILiberoDataset(Dataset):
         data_root: str | None = None,
         max_delay: int = ACTION_CHUNK_LEN,
         sampled_delay_max: int | None = None,
+        fixed_delay: int | None = None,
         delay_normalization_max: int | None = None,
         val_ratio: float = 0.1,
         mode: str = "train",
@@ -126,6 +127,7 @@ class PILiberoDataset(Dataset):
         self.data_root = pathlib.Path(data_root)
         self.max_delay = max_delay
         self.sampled_delay_max = max_delay if sampled_delay_max is None else int(sampled_delay_max)
+        self.fixed_delay = None if fixed_delay is None else int(fixed_delay)
         self.delay_normalization_max = (
             max_delay if delay_normalization_max is None else int(delay_normalization_max)
         )
@@ -139,11 +141,24 @@ class PILiberoDataset(Dataset):
                 f"sampled_delay_max must be in [{TRAIN_DELAY_MIN}, {self.max_delay}], "
                 f"got {self.sampled_delay_max}"
             )
-        if self.delay_normalization_max < self.sampled_delay_max:
+        if self.fixed_delay is not None and not (TRAIN_DELAY_MIN <= self.fixed_delay <= self.max_delay):
             raise ValueError(
-                "delay_normalization_max must be >= sampled_delay_max, "
-                f"got {self.delay_normalization_max} < {self.sampled_delay_max}"
+                f"fixed_delay must be in [{TRAIN_DELAY_MIN}, {self.max_delay}], "
+                f"got {self.fixed_delay}"
             )
+        if self.fixed_delay is not None and self.sampled_delay_max < self.fixed_delay:
+            raise ValueError(
+                "sampled_delay_max must be >= fixed_delay, "
+                f"got {self.sampled_delay_max} < {self.fixed_delay}"
+            )
+
+        effective_delay_max = self.fixed_delay if self.fixed_delay is not None else self.sampled_delay_max
+        if self.delay_normalization_max < effective_delay_max:
+            raise ValueError(
+                "delay_normalization_max must be >= effective delay max, "
+                f"got {self.delay_normalization_max} < {effective_delay_max}"
+            )
+        self._window_delay_max = effective_delay_max
 
         data_dir = self.data_root / "data"
         if not data_dir.exists():
@@ -172,14 +187,15 @@ class PILiberoDataset(Dataset):
                 if ep_task_index not in self.task_indices:
                     continue
             total_frames = len(df_meta)
-            max_valid_start = total_frames - self.sampled_delay_max
+            max_valid_start = total_frames - self._window_delay_max
             for start_t in range(max_valid_start):
                 self._windows.append((file_path, start_t))
 
         if not self._windows:
+            fixed_delay_str = f", fixed_delay={self.fixed_delay}" if self.fixed_delay is not None else ""
             raise RuntimeError(
                 f"No valid windows found (mode={mode}, max_delay={max_delay}, "
-                f"sampled_delay_max={self.sampled_delay_max}, benchmark={benchmark!r})."
+                f"sampled_delay_max={self.sampled_delay_max}{fixed_delay_str}, benchmark={benchmark!r})."
             )
 
         filter_parts = []
@@ -187,6 +203,8 @@ class PILiberoDataset(Dataset):
             filter_parts.append(f"benchmark={self.benchmark}")
         if self.task_indices is not None:
             filter_parts.append(f"task_indices={sorted(self.task_indices)}")
+        if self.fixed_delay is not None:
+            filter_parts.append(f"fixed_delay={self.fixed_delay}")
         filter_str = f", {', '.join(filter_parts)}" if filter_parts else ""
         print(
             f"[PILiberoDataset] mode={mode}: {len(self._windows):,} windows "
@@ -234,7 +252,10 @@ class PILiberoDataset(Dataset):
     def _load_sample(self, index: int) -> dict:
         file_path, start_t = self._windows[index]
 
-        d = int(np.random.randint(TRAIN_DELAY_MIN, self.sampled_delay_max + 1))
+        if self.fixed_delay is not None:
+            d = self.fixed_delay
+        else:
+            d = int(np.random.randint(TRAIN_DELAY_MIN, self.sampled_delay_max + 1))
         pred_t = start_t + d
 
         df = pd.read_parquet(file_path)
