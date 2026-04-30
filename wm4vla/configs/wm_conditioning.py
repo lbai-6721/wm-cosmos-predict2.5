@@ -1,4 +1,4 @@
-"""Unified wm4vla conditioning defaults for LeRobot LIBERO training."""
+"""Unified wm4vla conditioning defaults."""
 
 DEFAULT_MAX_DELAY = 8
 
@@ -17,10 +17,12 @@ DELAY_SCALAR_DIM = 1
 
 DEFAULT_EVAL_DELAYS = tuple(range(INFER_DELAY_MIN, INFER_DELAY_MAX + 1))
 
-# LeRobot LIBERO uses 7-dim actions. Per-slot feature = raw action + valid mask.
+# Per-slot feature = raw action + valid mask.
 LEROBOT_LIBERO_RAW_ACTION_DIM = 7
 LEROBOT_LIBERO_ACTION_SLOT_DIM = LEROBOT_LIBERO_RAW_ACTION_DIM + ACTION_MASK_DIM
+METAWORLD_RAW_ACTION_DIM = 4
+METAWORLD_ACTION_SLOT_DIM = METAWORLD_RAW_ACTION_DIM + ACTION_MASK_DIM
 
-# Backward-compatible aliases for the current single supported dataset.
+# Backward-compatible aliases for LIBERO.
 LIBERO_RAW_ACTION_DIM = LEROBOT_LIBERO_RAW_ACTION_DIM
 LIBERO_ACTION_SLOT_DIM = LEROBOT_LIBERO_ACTION_SLOT_DIM

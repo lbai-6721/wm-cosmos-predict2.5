@@ -25,7 +25,11 @@ from cosmos_predict2._src.interactive.configs.registry_defaults.teacher_model_pa
 from cosmos_predict2._src.interactive.configs.registry_experiment.experiments_dmd2_predict2p5 import (
     make_experiment,
 )
-from wm4vla.configs.wm_conditioning import ACTION_CHUNK_LEN, LIBERO_ACTION_SLOT_DIM
+from wm4vla.configs.wm_conditioning import (
+    ACTION_CHUNK_LEN,
+    LIBERO_ACTION_SLOT_DIM,
+    METAWORLD_ACTION_SLOT_DIM,
+)
 
 # Bridge dataset - 13 frame prediction at 256x320 resolution
 dmd2_trigflow_distill_cosmos_predict2_2B_action_conditioned_bridge_13frame_256x320 = make_experiment(
@@ -209,9 +213,54 @@ def _make_wm_libero_distill_experiment(
     name: str,
     data_train: str,
     teacher_ckpt_env_var: str,
+    action_slot_dim: int = LIBERO_ACTION_SLOT_DIM,
+    tokenizer_name: str = "wan2pt1_tokenizer",
+    tokenizer_overrides: dict | None = None,
     batch_size: int = 2,
 ) -> LazyDict:
-    """Factory for paired-view 256x256 LIBERO/student distillation experiments."""
+    """Factory for 256x256 wm4vla/student distillation experiments."""
+    if tokenizer_overrides is None and tokenizer_name == "wan2pt1_tokenizer":
+        tokenizer_overrides = {
+            "vae_pth": "hf://nvidia/Cosmos-Predict2.5-2B/tokenizer.pth",
+        }
+
+    model_config = dict(
+        # paired/single-view 5 pixel frames -> 2 latent frames (temporal compression = 4)
+        state_t=2,
+        # Teacher trained without clean cond timesteps (conditional_frame_timestep=-1.0)
+        use_clean_cond_timesteps=False,
+        # Teacher trained with adjust_video_noise=False -> multiplier must be 1.0
+        multiply_noise_by_video_len=False,
+        # Always 1 conditional frame (view_t in each sample)
+        conditional_frames_probs={0: 0.0, 1: 1.0, 2: 0.0},
+        min_num_conditional_frames=1,
+        max_num_conditional_frames=1,
+        # 4-GPU single-node training
+        fsdp_shard_size=4,
+        # Use precomputed T5 embeddings from data batch
+        text_encoder_config=None,
+        net=dict(
+            action_dim=action_slot_dim,
+            num_action_per_chunk=ACTION_CHUNK_LEN,
+            use_crossattn_projection=False,
+        ),
+        net_fake_score=dict(
+            action_dim=action_slot_dim,
+            num_action_per_chunk=ACTION_CHUNK_LEN,
+            use_crossattn_projection=False,
+        ),
+        net_teacher=dict(
+            action_dim=action_slot_dim,
+            num_action_per_chunk=ACTION_CHUNK_LEN,
+            use_crossattn_projection=False,
+        ),
+        teacher_load_from=_teacher_load_from_env(teacher_ckpt_env_var),
+        teacher_guidance=0,
+        student_update_freq=5,
+    )
+    if tokenizer_overrides is not None:
+        model_config["tokenizer"] = tokenizer_overrides
+
     experiment = make_experiment(
         name=name,
         data_train=data_train,
@@ -219,51 +268,11 @@ def _make_wm_libero_distill_experiment(
         net_teacher="cosmos_v1_2B_action_conditioned_teacher",
         net_fake_score="cosmos_v1_2B_action_conditioned_fake_score",
         conditioner="action_conditioned_video_conditioner",
-        # Teacher was trained with wan2pt1_tokenizer (DEFAULT_CHECKPOINT.experiment overrides wan2pt2→wan2pt1)
-        tokenizer="wan2pt1_tokenizer",
+        tokenizer=tokenizer_name,
         resolution="256",
         cp_size=1,
         overrides=dict(
-            model=dict(
-                config=dict(
-                    # paired 5 pixel frames → 2 latent frames (temporal compression = 4)
-                    state_t=2,
-                    # Teacher trained without clean cond timesteps (conditional_frame_timestep=-1.0)
-                    use_clean_cond_timesteps=False,
-                    # Teacher trained with adjust_video_noise=False → multiplier must be 1.0
-                    multiply_noise_by_video_len=False,
-                    # Always 1 conditional frame (view_t in each paired sample)
-                    conditional_frames_probs={0: 0.0, 1: 1.0, 2: 0.0},
-                    min_num_conditional_frames=1,
-                    max_num_conditional_frames=1,
-                    # 4-GPU single-node training
-                    fsdp_shard_size=4,
-                    # Use precomputed T5 embeddings from data batch
-                    text_encoder_config=None,
-                    # Use Hugging Face tokenizer checkpoint so cache location follows HF_* env vars.
-                    tokenizer=dict(
-                        vae_pth="hf://nvidia/Cosmos-Predict2.5-2B/tokenizer.pth",
-                    ),
-                    net=dict(
-                        action_dim=LIBERO_ACTION_SLOT_DIM,
-                        num_action_per_chunk=ACTION_CHUNK_LEN,
-                        use_crossattn_projection=False,
-                    ),
-                    net_fake_score=dict(
-                        action_dim=LIBERO_ACTION_SLOT_DIM,
-                        num_action_per_chunk=ACTION_CHUNK_LEN,
-                        use_crossattn_projection=False,
-                    ),
-                    net_teacher=dict(
-                        action_dim=LIBERO_ACTION_SLOT_DIM,
-                        num_action_per_chunk=ACTION_CHUNK_LEN,
-                        use_crossattn_projection=False,
-                    ),
-                    teacher_load_from=_teacher_load_from_env(teacher_ckpt_env_var),
-                    teacher_guidance=0,
-                    student_update_freq=5,
-                ),
-            ),
+            model=dict(config=model_config),
             dataloader_train=dict(batch_size=batch_size),
             # Disable all S3 I/O for local training (no credentials needed)
             upload_reproducible_setup=False,
@@ -333,6 +342,26 @@ dmd2_trigflow_distill_wm_pi_libero_256_spatial = _make_wm_libero_distill_experim
     name="dmd2_trigflow_distill_wm_pi_libero_256_spatial",
     data_train="pi_libero_spatial_256_train",
     teacher_ckpt_env_var="WM4VLA_PI_LIBERO_TEACHER_CKPT_SPATIAL",
+)
+
+
+# MetaWorld MT50 256x256 single-cam - 5 frame prediction (state_t=2)
+# Teacher: ActionConditionedMinimalV1LVGDiT, action_dim=5, num_action_per_chunk=8
+dmd2_trigflow_distill_wm_metaworld_mt50_256 = _make_wm_libero_distill_experiment(
+    name="dmd2_trigflow_distill_wm_metaworld_mt50_256",
+    data_train="metaworld_mt50_256_train",
+    teacher_ckpt_env_var="WM4VLA_METAWORLD_MT50_TEACHER_CKPT",
+    action_slot_dim=METAWORLD_ACTION_SLOT_DIM,
+    tokenizer_name="wan2pt1_lightvae_tokenizer",
+)
+
+
+dmd2_trigflow_distill_wm_metaworld_mt50_256_task0 = _make_wm_libero_distill_experiment(
+    name="dmd2_trigflow_distill_wm_metaworld_mt50_256_task0",
+    data_train="metaworld_mt50_256_task0_train",
+    teacher_ckpt_env_var="WM4VLA_METAWORLD_TASK0_TEACHER_CKPT",
+    action_slot_dim=METAWORLD_ACTION_SLOT_DIM,
+    tokenizer_name="wan2pt1_lightvae_tokenizer",
 )
 
 
@@ -437,6 +466,14 @@ torchrun --nproc_per_node=4 --master_port=12340 \
   model.config.teacher_load_from.load_path=/path/to/model_ema_bf16.pt \
   job.wandb_mode=disabled
 
+MetaWorld MT50 (256x256, single-cam 5 frames):
+torchrun --nproc_per_node=4 --master_port=12341 \
+  -m scripts.train \
+  --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
+  -- experiment=dmd2_trigflow_distill_wm_metaworld_mt50_256 \
+  model.config.teacher_load_from.load_path=/path/to/model_ema_bf16.pt \
+  job.wandb_mode=disabled
+
 Kinetix (128x128, 9 frames):
 torchrun --nproc_per_node=4 --master_port=12342 \
   -m scripts.train \
@@ -457,6 +494,8 @@ for _item in [
     dmd2_trigflow_distill_wm_pi_libero_256_goal,
     dmd2_trigflow_distill_wm_pi_libero_256_object,
     dmd2_trigflow_distill_wm_pi_libero_256_spatial,
+    dmd2_trigflow_distill_wm_metaworld_mt50_256,
+    dmd2_trigflow_distill_wm_metaworld_mt50_256_task0,
     dmd2_trigflow_distill_wm_kinetix_128_9frame,
 ]:
     cs.store(

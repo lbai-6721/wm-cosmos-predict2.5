@@ -1,7 +1,7 @@
 """wm4vla dataloader registrations for Hydra ConfigStore.
 
 Extracted from cosmos_predict2/_src/predict2/action/configs/action_conditioned/data.py.
-Registers Kinetix, LIBERO HDF5, and LIBERO LeRobot dataloaders.
+Registers Kinetix, LIBERO HDF5, LIBERO LeRobot, PI LIBERO, and MetaWorld dataloaders.
 """
 
 import os
@@ -16,6 +16,7 @@ from wm4vla.configs.wm_conditioning import ACTION_CHUNK_LEN
 from wm4vla.datasets.dataset_kinetix import KinetixPixelDataset
 from wm4vla.datasets.dataset_libero import LiberoPixelDataset
 from wm4vla.datasets.dataset_lerobot_libero import LeRobotLiberoDataset
+from wm4vla.datasets.dataset_metaworld import MetaWorldDataset
 from wm4vla.datasets.dataset_pi_libero import PILiberoDataset
 
 
@@ -30,20 +31,20 @@ def _get_sampler(dataset):
 
 
 def _collate_paired_view_batch(batch):
-    """Flatten dataset-produced paired view samples into one training batch.
+    """Flatten dataset-produced view samples into one training batch.
 
-    Each dataset item already contains a strong paired mini-batch with shape:
-      video: [2, 3, 5, H, W]
-      action: [2, max_delay, 8]
-      delay_scalar: [2, 1]
+    Each dataset item already contains one or more view samples with shape:
+      video: [V, 3, 5, H, W]
+      action: [V, max_delay, slot_dim]
+      delay_scalar: [V, 1]
       ...
 
     When DataLoader batch_size = N, `batch` is a list of N such dicts.
-    This collate function concatenates along the leading paired-view dimension
+    This collate function concatenates along the leading view dimension
     so the trainer receives standard tensors:
-      video: [2N, 3, 5, H, W]
-      action: [2N, max_delay, 8]
-      delay_scalar: [2N, 1]
+      video: [sum(V), 3, 5, H, W]
+      action: [sum(V), max_delay, slot_dim]
+      delay_scalar: [sum(V), 1]
     """
     assert len(batch) > 0, "Empty batch is not allowed"
 
@@ -255,6 +256,55 @@ def register_wm4vla_data():
             name=f"{store_prefix}_val",
             node=val_dl,
         )
+
+    # ── MetaWorld MT50 single-view short-video (480x480 source -> 256x256) ──
+    _metaworld_data_root = os.environ.get(
+        "METAWORLD_DATA_ROOT",
+        "/mnt/cpfs/yangboxue/vla/wm4vla/data/dataset/lerobot/metaworld_mt50",
+    )
+    _metaworld_t5_emb_path = os.environ.get("METAWORLD_T5_EMB_PATH", None)
+
+    def _metaworld_pair(task_indices=None):
+        """Create a (train, val) dataset pair for MetaWorld MT50."""
+        train_ds = L(MetaWorldDataset)(
+            data_root=_metaworld_data_root,
+            max_delay=ACTION_CHUNK_LEN,
+            delay_normalization_max=ACTION_CHUNK_LEN,
+            val_ratio=0.1, mode="train", seed=0,
+            t5_emb_path=_metaworld_t5_emb_path, task_indices=task_indices,
+        )
+        val_ds = L(MetaWorldDataset)(
+            data_root=_metaworld_data_root,
+            max_delay=ACTION_CHUNK_LEN,
+            delay_normalization_max=ACTION_CHUNK_LEN,
+            val_ratio=0.1, mode="val", seed=0,
+            t5_emb_path=_metaworld_t5_emb_path, task_indices=task_indices,
+        )
+        train_dl = L(DataLoader)(
+            dataset=train_ds,
+            sampler=L(_get_sampler)(dataset=train_ds),
+            batch_size=1, drop_last=True,
+            collate_fn=_collate_paired_view_batch,
+        )
+        val_dl = L(DataLoader)(
+            dataset=val_ds,
+            sampler=L(_get_sampler)(dataset=val_ds),
+            batch_size=1, drop_last=True,
+            collate_fn=_collate_paired_view_batch,
+        )
+        return train_dl, val_dl
+
+    train_dl, val_dl = _metaworld_pair()
+    cs.store(group="data_train", package="dataloader_train",
+             name="metaworld_mt50_256_train", node=train_dl)
+    cs.store(group="data_val", package="dataloader_val",
+             name="metaworld_mt50_256_val", node=val_dl)
+
+    train_dl, val_dl = _metaworld_pair(task_indices=[0])
+    cs.store(group="data_train", package="dataloader_train",
+             name="metaworld_mt50_256_task0_train", node=train_dl)
+    cs.store(group="data_val", package="dataloader_val",
+             name="metaworld_mt50_256_task0_val", node=val_dl)
 
     # ── Kinetix pixel dataset (128×128, state_t=3) ──────────────────────────
     _kinetix_data_pixels_dir = os.environ.get(
