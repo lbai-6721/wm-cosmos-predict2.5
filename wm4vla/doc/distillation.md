@@ -36,8 +36,6 @@ export LEROBOT_LIBERO_DATA_ROOT=/home/kyji/storage_net/tmp/lbai/cosmos-predict2.
 export LEROBOT_LIBERO_T5_EMB_PATH=${LEROBOT_LIBERO_DATA_ROOT}/meta/t5_embeddings.pkl
 export WM4VLA_LIBERO_TASK0_TEACHER_CKPT=/path/to/ac_libero_lerobot_256_pixels_2b_task0/model_ema_bf16.pt
 
-# 可选：Kinetix
-export WM4VLA_KINETIX_TEACHER_CKPT=/path/to/kinetix/model_ema_bf16.pt
 ```
 
 ## Teacher Checkpoint 格式
@@ -88,7 +86,6 @@ delay_scalar : [B, 1]
 ### 旧实验
 
 - `dmd2_trigflow_distill_wm_libero_lerobot_256_task0`
-- `dmd2_trigflow_distill_wm_kinetix_128_9frame`
 
 ### 新增 `pi_libero` 实验
 
@@ -227,7 +224,7 @@ ${IMAGINAIRE_OUTPUT_ROOT}/cosmos3_interactive/<experiment_name>/checkpoints/iter
 转换为 `.pt`：
 
 ```bash
-CHECKPOINTS_DIR=/home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/distill-output/benchmark/pi_libero_10_delay8_only_20000/cosmos_interactive/cosmos3_interactive/dmd2_trigflow_distill_wm_pi_libero_256_10/checkpoints
+CHECKPOINTS_DIR=/home/jikangye/workspace/tmp/lbai/tmp/wm4vla-outputs/cosmos-predict-outputs/one_for_all/pi_libero_all/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_pi_libero_256_skip_dynamics_dual_cam_all/checkpoints
 CHECKPOINT_ITER=$(cat ${CHECKPOINTS_DIR}/latest_checkpoint.txt)
 
 python scripts/convert_distcp_to_pt.py \

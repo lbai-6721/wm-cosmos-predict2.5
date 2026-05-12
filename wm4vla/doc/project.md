@@ -2,7 +2,7 @@
 world model 4 vla(wm4vla)
 采取双gpu策略，在一张卡上跑world model生成观测值，传给vla生成action，而不需要等待执行完action后再传回观测值，实现机器人一边执行动作，模型一边推理的异步机制。
 
-现在只需要通过仿真环境（libero, kinetix），模拟推理延迟，实现机器人动作异步推理的仿真实验：
+现在只需要通过 LIBERO / PI-LIBERO 仿真环境模拟推理延迟，实现机器人动作异步推理的仿真实验：
 
 根据benchmark，训练一个生成模型，实现传入当前状态，输出下一次的观测信息，不需要等待机器人传回执行完动作后的状态信息，再把生成的观测信息传给vla，生成action给机器人执行。
 
@@ -21,12 +21,6 @@ model: pi0, pi05; 仿真环境：libero
 
 world model需要根据现有的cosmos-predict2.5模型在libero数据集上进行post-training
 policy不需要根据wm4vla架构进行后训练
-
-## 仿真实验2
-model: flow policy; 仿真环境：kinetix
-
-在/home/kyji/storage_net/tmp/lbai/real-time-chunking-kinetix的基础上，改成我们的wm4vla：即使用world model生成观测值，传入vla的模型，其他实验设置保持一致。
-
 
 ## 实现说明
 目前teacher模型在cosmos-predict2.5目录下训练，

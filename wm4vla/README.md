@@ -7,17 +7,18 @@
 ```
 wm4vla/
 ├── datasets/                          # 数据集类
-│   ├── dataset_kinetix.py             # Kinetix skip-dynamics (128×128, 9帧)
 │   ├── dataset_lerobot_libero.py      # LIBERO LeRobot parquet (256×256, 5帧 paired)
-│   ├── dataset_libero.py              # LIBERO HDF5 (128×128, 13帧)
 │   └── dataset_pi_libero.py           # physical-intelligence/libero parquet (256×256, 5帧 paired)
 │
 ├── configs/                           # Hydra 配置注册
-│   ├── experiments.py                 # 5个实验配置 (Kinetix / LIBERO / LeRobot)
+│   ├── action_conditioned/config.py   # wm4vla teacher 训练配置入口
+│   ├── experiments.py                 # LeRobot / PI-LIBERO teacher 实验配置
 │   └── data_registry.py              # 数据加载器注册
 │
 ├── scripts/                           # 工具脚本
 │   ├── precompute_libero_t5.py        # 预计算 T5 文本嵌入
+│   ├── train_wm_delay_curriculum*.sh  # teacher delay curriculum 训练
+│   ├── train_wm_delay8_pi_libero.sh   # PI-LIBERO 固定 delay=8 teacher 训练
 │   ├── train_distill_pi_libero.sh     # pi_libero 蒸馏启动脚本
 │   ├── eval_world_model.py            # 离线评估 (PSNR/SSIM/LPIPS)
 │   ├── eval_distilled_world_model.py  # 蒸馏模型离线评估
@@ -25,8 +26,7 @@ wm4vla/
 │
 └── doc/                               # 文档
     ├── train_wm_pixels.md             # 训练流程说明
-    ├── project.md                     # 项目架构说明
-    └── data.md                        # 数据格式说明
+    └── project.md                     # 项目架构说明
 ```
 
 ## 与 Cosmos 原始代码的关系
@@ -35,15 +35,16 @@ wm4vla/
 
 - `cosmos_predict2/experiments/base/action.py` → 调用 `wm4vla.configs.experiments.register_wm4vla_experiments()`
 - `cosmos_predict2/.../data.py` → 调用 `wm4vla.configs.data_registry.register_wm4vla_data()`
-- `cosmos_predict2/.../datasets/dataset_*.py` → re-export shim（向后兼容）
 - `scripts/*.py` → forwarding shim 到 `wm4vla/scripts/`
+
+Kinetix 与旧 HDF5 LIBERO 系列已从当前 teacher world model 训练路径中移除；主线只保留 LeRobot LIBERO 与 PI-LIBERO parquet 数据流。
 
 原始训练命令**完全不变**：
 
 ```bash
 torchrun --nproc_per_node=4 -m scripts.train \
-  --config=cosmos_predict2/_src/predict2/action/configs/action_conditioned/config.py -- \
-  experiment=ac_libero_lerobot_256_pixels_2b
+  --config=wm4vla/configs/action_conditioned/config.py -- \
+  experiment=ac_pi_libero_256_pixels_2b_10
 ```
 
 ## 仍保留在 Cosmos 原文件中的修改

@@ -1,11 +1,13 @@
 # 说明
 
-本仓库仅用于蒸馏 student model，不用于训练 teacher model。
+本仓库现在同时支持 teacher world model 训练和 student distillation。
 
 当前推荐路径分两类：
 
-- `pi_libero`：新增主线，支持 `all / libero_10 / libero_goal / libero_object / libero_spatial`
-- `lerobot task0`：保留旧单任务蒸馏入口，便于兼容已有 checkpoint 和评估脚本
+- teacher WM：使用 `wm4vla/configs/action_conditioned/config.py`，支持 LeRobot 与 `pi_libero` 的 paired 5-frame skip-dynamics 训练
+- student distillation：继续使用 `cosmos_predict2/_src/interactive/configs/registry_predict2p5.py`
+
+Kinetix 与旧 HDF5 LIBERO 系列已从当前 teacher world model 训练路径中移除；主线只保留 LeRobot LIBERO 与 `pi_libero` parquet 数据流。
 
 ## 激活环境
 
@@ -76,7 +78,6 @@ python scripts/convert_distcp_to_pt.py \
 保留旧实验：
 
 - `dmd2_trigflow_distill_wm_libero_lerobot_256_task0`
-- `dmd2_trigflow_distill_wm_kinetix_128_9frame`
 
 ## 推荐启动方式
 

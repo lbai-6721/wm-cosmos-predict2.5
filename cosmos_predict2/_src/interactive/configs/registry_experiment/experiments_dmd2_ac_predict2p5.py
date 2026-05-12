@@ -349,87 +349,6 @@ dmd2_trigflow_distill_wm_pi_libero_256_spatial = _make_wm_libero_distill_experim
 )
 
 
-# Kinetix 128×128 - 9 frame prediction (state_t=3)
-# Teacher: ActionConditionedMinimalV1LVGDiT, action_dim=7, num_action_per_chunk=1
-dmd2_trigflow_distill_wm_kinetix_128_9frame = make_experiment(
-    name="dmd2_trigflow_distill_wm_kinetix_128_9frame",
-    data_train="kinetix_5frame_128_train",
-    net="cosmos_v1_2B_action_conditioned_student",
-    net_teacher="cosmos_v1_2B_action_conditioned_teacher",
-    net_fake_score="cosmos_v1_2B_action_conditioned_fake_score",
-    conditioner="action_conditioned_video_conditioner",
-    # Teacher was trained with wan2pt1_tokenizer (DEFAULT_CHECKPOINT.experiment overrides wan2pt2→wan2pt1)
-    tokenizer="wan2pt1_tokenizer",
-    resolution="128",
-    cp_size=1,
-    overrides=dict(
-        model=dict(
-            config=dict(
-                # 9 pixel frames → 3 latent frames (temporal compression = 4, +1 blank)
-                state_t=3,
-                # Teacher trained without clean cond timesteps (conditional_frame_timestep=-1.0)
-                use_clean_cond_timesteps=False,
-                # Teacher trained with adjust_video_noise=False → multiplier must be 1.0
-                multiply_noise_by_video_len=False,
-                # Always 2 conditional frames (blank + obs_t)
-                conditional_frames_probs={0: 0.0, 1: 0.0, 2: 1.0},
-                min_num_conditional_frames=2,
-                max_num_conditional_frames=2,
-                # 4-GPU single-node training
-                fsdp_shard_size=4,
-                # Kinetix has no text condition (uses zero T5 embeddings from data batch)
-                text_encoder_config=None,
-                # Use Hugging Face tokenizer checkpoint so cache location follows HF_* env vars.
-                tokenizer=dict(
-                    vae_pth="hf://nvidia/Cosmos-Predict2.5-2B/tokenizer.pth",
-                ),
-                net=dict(
-                    action_dim=7,
-                    num_action_per_chunk=1,
-                    use_crossattn_projection=False,
-                ),
-                net_fake_score=dict(
-                    action_dim=7,
-                    num_action_per_chunk=1,
-                    use_crossattn_projection=False,
-                ),
-                net_teacher=dict(
-                    action_dim=7,
-                    num_action_per_chunk=1,
-                    use_crossattn_projection=False,
-                ),
-                teacher_load_from=_teacher_load_from_env("WM4VLA_KINETIX_TEACHER_CKPT"),
-                teacher_guidance=0,
-                student_update_freq=5,
-            ),
-        ),
-        dataloader_train=dict(batch_size=4),
-        # Disable all S3 I/O for local training (no credentials needed)
-        upload_reproducible_setup=False,
-        checkpoint=dict(
-            save_to_object_store=dict(enabled=False),
-            load_from_object_store=dict(enabled=False),
-        ),
-        trainer=dict(
-            straggler_detection=dict(enabled=False),
-            callbacks=dict(
-                # Disable val-prompt sampling: requires online text encoder which we don't have
-                every_n_sample_reg=dict(do_sample_val_prompts=False, save_s3=False),
-                every_n_sample_ema=dict(do_sample_val_prompts=False, save_s3=False),
-                heart_beat=dict(save_s3=False),
-                iter_speed=dict(save_s3=False),
-                device_monitor=dict(save_s3=False),
-                wandb=dict(save_s3=False),
-                wandb_10x=dict(save_s3=False),
-                dataloader_speed=dict(save_s3=False),
-            ),
-        ),
-    ),
-)
-# Remove nested dataloaders structure inherited from make_experiment
-del dmd2_trigflow_distill_wm_kinetix_128_9frame["dataloader_train"]["dataloaders"]
-
-
 cs = ConfigStore.instance()
 """
 4-GPU single-node distillation commands:
@@ -450,14 +369,6 @@ torchrun --nproc_per_node=4 --master_port=12340 \
   model.config.teacher_load_from.load_path=/path/to/model_ema_bf16.pt \
   job.wandb_mode=disabled
 
-Kinetix (128x128, 9 frames):
-torchrun --nproc_per_node=4 --master_port=12342 \
-  -m scripts.train \
-  --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py \
-  -- experiment=dmd2_trigflow_distill_wm_kinetix_128_9frame \
-  model.config.teacher_load_from.load_path=/path/to/model_ema_bf16.pt \
-  job.wandb_mode=disabled
-
 2B (original Bridge):
 torchrun --nproc_per_node=4 --master_port=12340 -m scripts.train --config=cosmos_predict2/_src/interactive/configs/registry_predict2p5.py -- experiment=dmd2_trigflow_distill_cosmos_predict2_2B_bidirectional_TnI2V
 """
@@ -470,7 +381,6 @@ for _item in [
     dmd2_trigflow_distill_wm_pi_libero_256_goal,
     dmd2_trigflow_distill_wm_pi_libero_256_object,
     dmd2_trigflow_distill_wm_pi_libero_256_spatial,
-    dmd2_trigflow_distill_wm_kinetix_128_9frame,
 ]:
     cs.store(
         group="experiment",

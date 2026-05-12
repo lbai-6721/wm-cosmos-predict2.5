@@ -203,7 +203,7 @@ def register_training_and_val_data():
     if register_gr00t_customized_gr1_data is not None:
         register_gr00t_customized_gr1_data()
 
-    # Register wm4vla dataloaders (Kinetix / LIBERO / LeRobot).
+    # Register wm4vla dataloaders (LIBERO LeRobot / PI-LIBERO).
     from wm4vla.configs.data_registry import register_wm4vla_data
 
     register_wm4vla_data()

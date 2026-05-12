@@ -137,7 +137,7 @@ for _item in [ac_reason_embeddings_rectified_flow_2b_256_320]:
 
     cs.store(group="experiment", package="_global_", name=f"{experiment_name}", node=_item)
 
-# Register wm4vla experiments (Kinetix / LIBERO variants).
+# Register wm4vla experiments (LIBERO LeRobot / PI-LIBERO variants).
 from wm4vla.configs.experiments import register_wm4vla_experiments  # noqa: E402
 
 register_wm4vla_experiments()

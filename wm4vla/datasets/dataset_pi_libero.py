@@ -58,10 +58,19 @@ _CAM1_KEY = "image"
 _CAM2_KEY = "wrist_image"
 _ACT_KEY = "actions"
 
+# VAE temporal compression factor.
 _TEMPORAL_COMPRESSION = 4
-_SEQUENCE_LENGTH = 1 + _TEMPORAL_COMPRESSION
+
+# state_t=2: 5 pixel frames total.
+_SEQUENCE_LENGTH = 1 + _TEMPORAL_COMPRESSION  # = 5
+
 _MAX_RETRIES = 16
 
+# Benchmark splits follow the task ordering found in physical-intelligence/libero:
+#   0-9   -> Libero-10
+#   10-19 -> Libero-Goal
+#   20-29 -> Libero-Object
+#   30-39 -> Libero-Spatial
 PI_LIBERO_BENCHMARK_TASKS = {
     "libero_10": tuple(range(0, 10)),
     "libero_goal": tuple(range(10, 20)),
@@ -151,7 +160,6 @@ class PILiberoDataset(Dataset):
                 "sampled_delay_max must be >= fixed_delay, "
                 f"got {self.sampled_delay_max} < {self.fixed_delay}"
             )
-
         effective_delay_max = self.fixed_delay if self.fixed_delay is not None else self.sampled_delay_max
         if self.delay_normalization_max < effective_delay_max:
             raise ValueError(
@@ -195,7 +203,8 @@ class PILiberoDataset(Dataset):
             fixed_delay_str = f", fixed_delay={self.fixed_delay}" if self.fixed_delay is not None else ""
             raise RuntimeError(
                 f"No valid windows found (mode={mode}, max_delay={max_delay}, "
-                f"sampled_delay_max={self.sampled_delay_max}{fixed_delay_str}, benchmark={benchmark!r})."
+                f"sampled_delay_max={self.sampled_delay_max}{fixed_delay_str}, "
+                f"benchmark={benchmark!r})."
             )
 
         filter_parts = []

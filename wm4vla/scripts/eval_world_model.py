@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """eval_world_model.py
 
-离线评估训练好的 Libero-Spatial World Model（model_ema_bf16.pt）。
+离线评估训练好的 PI-LIBERO / LIBERO World Model（model_ema_bf16.pt）。
 
 评估协议：
-  - 数据集：val split（seed=0, val_ratio=0.1），与训练时完全相同的分割
+  - 数据集：默认使用 val split（seed=0, val_ratio=0.1）
+  - 对 `physical-intelligence/libero` 的 benchmark / task 子集评估，
+    会先过滤子集再 split，以对齐 `lerobot` 对应子集的评估集
+  - 支持 `physical-intelligence/libero`（pi_libero）和 LeRobot LIBERO 两种 parquet schema
+  - 支持按 benchmark（all / libero_10 / libero_goal / libero_object / libero_spatial）
+    以及 task_indices 过滤
   - 支持按 task_indices 过滤，用于单任务快速评估
   - 固定 d ∈ {1, 2, 3, 4}，各独立统计一组指标
   - 每个 val episode 随机抽取 20 个 start_t
@@ -35,15 +40,13 @@
       [--output outputs/eval_wm/task0.json]
 
 CUDA_VISIBLE_DEVICES=0 python scripts/eval_world_model.py \
-    --ckpt /home/kyji/storage_net/tmp/lbai/cosmos-predict2.5/outputs/wm-output/cosmos_predict2_action_conditioned/cosmos_predict_v2p5/2b_libero_10_lerobot_256_skip_dynamics_dual_cam_task0/checkpoints/iter_000008000/model_ema_bf16.pt \
-    --task-indices 0 \
-    --experiment ac_libero_lerobot_256_pixels_2b_task0 \
-    --t5-emb-path /home/kyji/public/dataset/lerobot/lerobot--libero_10_image@v2.0/meta/t5_embeddings.pkl \
-    --num-steps 1 \
-    --tokenizer-backend lightvae \
-    --tokenizer-vae-pth /home/kyji/public/models/lightx2v/vae/lightvaew2_1.pth \
-    --save-images outputs/eval_wm_test/test_time_new/test_time_1_20260416/libero-10_task0_images \
-    --output outputs/eval_wm_test/test_time_new/test_time_1_20260416/libero-10_task0.json
+    --ckpt /home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/cosmos-predict-output/one_for_all/pi_libero_all/16000/model_ema_bf16.pt \
+    --experiment ac_pi_libero_256_pixels_2b_10 \
+    --t5-emb-path /mnt/storage/users/kyji_data/tmp/lbai/cosmos-predict2.5/physical-intelligence/libero/meta/t5_embeddings.pkl \
+    --num-steps 35 \
+    --samples-per-episode 5 \
+    --save-images /home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/eval_wm/pi_libero_10_test_one_for_all_16000/result_images \
+    --output /home/kyji/storage_net/tmp/lbai/tmp/wm4lva-output/wm-output/wm-output/eval_wm/pi_libero_10_test_one_for_all_16000/result.json
 
   # 评估全部 10 个任务
   python scripts/eval_world_model.py \\
@@ -92,6 +95,7 @@ from wm4vla.configs.wm_conditioning import (
     DEFAULT_EVAL_DELAYS,
     INFER_DELAY_MAX,
 )
+from wm4vla.datasets.dataset_pi_libero import PI_LIBERO_BENCHMARK_TASKS
 
 # ── 可选依赖（不影响主要指标）──────────────────────────────────────────────
 try:
@@ -110,18 +114,31 @@ except ImportError:
 
 
 # ── 常量（与训练/数据集一致）───────────────────────────────────────────────
-_CAM1_KEY = "observation.images.image"
-_CAM2_KEY = "observation.images.wrist_image"
-_ACT_KEY  = "action"
+_COLUMN_CANDIDATES = {
+    "cam1": ("image", "observation.images.image"),
+    "cam2": ("wrist_image", "observation.images.wrist_image"),
+    "action": ("actions", "action"),
+}
 
-_DEFAULT_DATA_ROOT = (
-    "/home/kyji/public/dataset/lerobot"
-    "/lerobot--libero_10_image@v2.0"
+_DEFAULT_DATA_ROOT = os.environ.get(
+    "PI_LIBERO_DATA_ROOT",
+    #"LEROBOT_LIBERO_DATA_ROOT",
+    "/mnt/storage/users/kyji_data/tmp/lbai/cosmos-predict2.5/physical-intelligence/libero",
 )
-_EXPERIMENT_NAME_FULL   = "ac_libero_lerobot_256_pixels_2b"
-_EXPERIMENT_NAME_TASK0  = "ac_libero_lerobot_256_pixels_2b_task0"
-_EXPERIMENT_NAME_TASK01 = "ac_libero_lerobot_256_pixels_2b_task01"
-_CONFIG_FILE      = "cosmos_predict2/_src/predict2/action/configs/action_conditioned/config.py"
+_DEFAULT_EXPERIMENT = "ac_pi_libero_256_pixels_2b_all"
+#_DEFAULT_EXPERIMENT = "ac_libero_lerobot_256_pixels_2b"
+_EXPERIMENT_TO_BENCHMARK = {
+    "ac_pi_libero_256_pixels_2b_all": None,
+    "ac_pi_libero_256_pixels_2b_10": "libero_10",
+    "ac_pi_libero_256_pixels_2b_goal": "libero_goal",
+    "ac_pi_libero_256_pixels_2b_object": "libero_object",
+    "ac_pi_libero_256_pixels_2b_spatial": "libero_spatial",
+    # 兼容旧实验名，避免脚本回归。
+    "ac_libero_lerobot_256_pixels_2b": None,
+    "ac_libero_lerobot_256_pixels_2b_task0": None,
+    "ac_libero_lerobot_256_pixels_2b_task01": None,
+}
+_CONFIG_FILE      = "wm4vla/configs/action_conditioned/config.py"
 _NUM_LATENT_COND  = 1    # state_t=2 → 1 conditioning latent frame
 _NUM_VIDEO_FRAMES = 5    # 1 + (2-1)×4 = 5 pixel frames
 _RESOLUTION       = "256,256"
@@ -151,6 +168,77 @@ def _tensor_to_uint8(t: torch.Tensor) -> np.ndarray:
     img = ((t.float() + 1.0) / 2.0).clamp(0, 1)  # → [0, 1]
     img = (img * 255.0).to(torch.uint8)
     return img.permute(1, 2, 0).cpu().numpy()  # → (H, W, 3)
+
+
+def resolve_episode_schema(columns: Sequence[str]) -> Dict[str, str]:
+    """Infer camera/action column names for either PI-LIBERO or LeRobot LIBERO parquet."""
+    resolved: Dict[str, str] = {}
+    available = set(columns)
+    for logical_name, candidates in _COLUMN_CANDIDATES.items():
+        for candidate in candidates:
+            if candidate in available:
+                resolved[logical_name] = candidate
+                break
+        else:
+            raise KeyError(
+                f"Missing required column for {logical_name!r}. "
+                f"Tried {candidates}, available columns: {sorted(available)}"
+            )
+    return resolved
+
+
+def resolve_task_filter(
+    benchmark: Optional[str],
+    task_indices: Optional[Sequence[int]],
+) -> Optional[set[int]]:
+    """Combine benchmark-level and explicit task filtering."""
+    benchmark_tasks = None
+    if benchmark is not None:
+        if benchmark not in PI_LIBERO_BENCHMARK_TASKS:
+            valid = ", ".join(["all", *sorted(PI_LIBERO_BENCHMARK_TASKS)])
+            raise ValueError(f"Unknown benchmark {benchmark!r}; valid: {valid}")
+        benchmark_tasks = set(PI_LIBERO_BENCHMARK_TASKS[benchmark])
+
+    explicit_tasks = set(int(t) for t in task_indices) if task_indices is not None else None
+    if benchmark_tasks is None:
+        return explicit_tasks
+    if explicit_tasks is None:
+        return benchmark_tasks
+    return benchmark_tasks & explicit_tasks
+
+
+def resolve_experiment_and_filter(
+    experiment: Optional[str],
+    benchmark: Optional[str],
+    task_indices: Optional[Sequence[int]],
+) -> tuple[str, Optional[str], Optional[List[int]]]:
+    """Resolve experiment / benchmark / task subset into a consistent evaluation config."""
+    experiment_name = experiment or _DEFAULT_EXPERIMENT
+    if experiment_name not in _EXPERIMENT_TO_BENCHMARK:
+        valid = ", ".join(sorted(_EXPERIMENT_TO_BENCHMARK))
+        raise ValueError(
+            f"Unsupported experiment {experiment_name!r}. "
+            f"Supported experiments: {valid}"
+        )
+
+    inferred_benchmark = _EXPERIMENT_TO_BENCHMARK[experiment_name]
+    if benchmark == "all":
+        benchmark = None
+    if inferred_benchmark is not None and benchmark is not None and inferred_benchmark != benchmark:
+        raise ValueError(
+            f"Experiment {experiment_name} expects benchmark={inferred_benchmark!r}, "
+            f"but got --benchmark {benchmark!r}"
+        )
+
+    effective_benchmark = inferred_benchmark if inferred_benchmark is not None else benchmark
+    task_filter = resolve_task_filter(effective_benchmark, task_indices)
+    if task_filter is not None and len(task_filter) == 0:
+        raise ValueError(
+            f"No tasks left after combining benchmark={effective_benchmark!r} "
+            f"and task_indices={list(task_indices)}"
+        )
+    resolved_task_indices = sorted(task_filter) if task_filter is not None else None
+    return experiment_name, effective_benchmark, resolved_task_indices
 
 
 def build_action_inputs(action_rows: np.ndarray, delay: int, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -239,10 +327,11 @@ def build_val_episode_samples(
     max_delay: int = 5,
     samples_per_episode: int = 20,
     sample_seed: int = 42,
+    benchmark: Optional[str] = None,
     task_indices: Optional[Sequence[int]] = None,
 ) -> List[tuple]:
     """
-    复现训练时的 train/val episode 分割，返回 val 集。
+    构建 val episode 采样表，返回 val 集。
 
     Args:
         task_indices: 若指定，只保留 task_index 在此列表中的 episode（单任务评估）。
@@ -251,36 +340,75 @@ def build_val_episode_samples(
     Returns:
         list of (parquet_file_path, task_index, [start_t, ...]) per episode
     """
-    data_dir = pathlib.Path(data_root) / "data" / "chunk-000"
+    data_dir = pathlib.Path(data_root) / "data"
     if not data_dir.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
-    all_files = sorted(data_dir.glob("episode_*.parquet"))
+    all_files = sorted(data_dir.glob("chunk-*/episode_*.parquet"))
     if not all_files:
-        raise FileNotFoundError(f"No episode parquet files in {data_dir}")
+        raise FileNotFoundError(f"No episode parquet files in {data_dir}/chunk-*")
 
-    # ── 与 dataset_lerobot_libero.py 完全相同的分割逻辑 ────────────────────
+    task_filter = resolve_task_filter(benchmark=benchmark, task_indices=task_indices)
+
+    # physical-intelligence/libero 是 40-task 合并集。若在这里直接沿用
+    # “先对全集 split，再按 benchmark 过滤”的逻辑，评到 libero_10 时拿到的
+    # episode 子集会和 lerobot--libero_10_image 的 val split 不一致。
+    #
+    # 为了让 pi_libero_10 与 lerobot_libero_10 在评估时对齐到同一批
+    # 10-task episode，这里对 PI benchmark / task 子集采用“先过滤、后切分”。
+    data_root_str = str(pathlib.Path(data_root))
+    align_subset_before_split = (
+        task_filter is not None
+        and "physical-intelligence/libero" in data_root_str
+    )
+    split_candidates = all_files
+    if align_subset_before_split:
+        filtered = []
+        for fp in all_files:
+            try:
+                df_task = pd.read_parquet(fp, columns=["task_index"])
+                ep_task = int(df_task["task_index"].iloc[0])
+                if ep_task in task_filter:
+                    filtered.append(fp)
+            except Exception as e:
+                print(f"[warn] Failed to read task_index from {fp.name}: {e}")
+        print(
+            f"[data] Using subset-aligned split for PI LIBERO: "
+            f"benchmark={benchmark!r}, task_indices={sorted(task_filter)} -> "
+            f"{len(filtered)}/{len(all_files)} candidate episodes before val split"
+        )
+        split_candidates = filtered
+
+    if not split_candidates:
+        raise RuntimeError(
+            f"No candidate episodes found after applying benchmark={benchmark!r}, "
+            f"task_indices={sorted(task_filter) if task_filter is not None else None}"
+        )
+
+    # ── episode-level val split ───────────────────────────────────────────────
     rng_split = np.random.default_rng(split_seed)
-    perm = rng_split.permutation(len(all_files))
-    n_val = max(1, int(len(all_files) * val_ratio))
+    perm = rng_split.permutation(len(split_candidates))
+    n_val = max(1, int(len(split_candidates) * val_ratio))
     val_set = set(perm[:n_val].tolist())
 
-    val_files = [all_files[i] for i in range(len(all_files)) if i in val_set]
-    print(f"[data] Total episodes: {len(all_files)}, val episodes: {len(val_files)}")
+    val_files = [split_candidates[i] for i in range(len(split_candidates)) if i in val_set]
+    print(
+        f"[data] Total split candidates: {len(split_candidates)}, "
+        f"val episodes: {len(val_files)}"
+    )
 
-    # ── 可选：按 task_indices 过滤（复现 dataset_lerobot_libero.py 行为）──
-    if task_indices is not None:
-        task_indices_set = set(int(t) for t in task_indices)
+    # 非 PI 子集对齐模式仍保留旧行为：先 split，再按 task 过滤。
+    if task_filter is not None and not align_subset_before_split:
         filtered = []
         for fp in val_files:
             try:
                 df_task = pd.read_parquet(fp, columns=["task_index"])
                 ep_task = int(df_task["task_index"].iloc[0])
-                if ep_task in task_indices_set:
+                if ep_task in task_filter:
                     filtered.append(fp)
             except Exception as e:
                 print(f"[warn] Failed to read task_index from {fp.name}: {e}")
-        print(f"[data] After filtering task_indices={list(task_indices_set)}: "
+        print(f"[data] After filtering benchmark={benchmark!r}, task_indices={sorted(task_filter)}: "
               f"{len(filtered)}/{len(val_files)} val episodes kept")
         val_files = filtered
 
@@ -291,7 +419,7 @@ def build_val_episode_samples(
         df_meta = pd.read_parquet(file_path, columns=["frame_index", "task_index"])
         T = len(df_meta)
         ep_task_index = int(df_meta["task_index"].iloc[0])
-        # 合法 start_t：start_t + max_delay - 1 < T  →  start_t ≤ T - max_delay
+        # 合法 start_t：start_t + max_delay ≤ T - 1  →  start_t ≤ T - max_delay - 1
         valid_starts = list(range(T - max_delay))
         if not valid_starts:
             print(f"[warn] Episode {file_path.name} too short (T={T}), skipped")
@@ -301,7 +429,7 @@ def build_val_episode_samples(
 
     total_windows = sum(len(s) for _, _, s in result)
     print(f"[data] {len(result)} val episodes, {total_windows} sampled windows "
-          f"(×4 delays = {total_windows * 4} inference calls)")
+          f"(×{len(DEFAULT_EVAL_DELAYS)} delays = {total_windows * len(DEFAULT_EVAL_DELAYS)} evaluations)")
     return result
 
 
@@ -316,10 +444,10 @@ def build_input_video(cam1_t: np.ndarray, cam2_t: np.ndarray) -> torch.Tensor:
     帧布局（与 dataset_lerobot_libero.py 完全一致，state_t=2）：
       Batch 0:
         Frame 0    : cam1_t    ← conditioning latent 0
-        Frames 1–4 : zeros     ← 待预测 cam1_{t+d+1}（latent 1）
+        Frames 1–4 : zeros     ← 待预测 cam1_{t+d}（latent 1）
       Batch 1:
         Frame 0    : cam2_t    ← conditioning latent 0
-        Frames 1–4 : zeros     ← 待预测 cam2_{t+d+1}（latent 1）
+        Frames 1–4 : zeros     ← 待预测 cam2_{t+d}（latent 1）
 
     Returns:
         [2, 3, 5, H, W] uint8 tensor（CPU）
@@ -346,56 +474,40 @@ def evaluate(args):
     torch.manual_seed(args.seed)
 
     # ── 解析评估模式 ──────────────────────────────────────────────────────────
-    task_indices: Optional[List[int]] = (
+    raw_task_indices: Optional[List[int]] = (
         [int(t) for t in args.task_indices] if args.task_indices else None
     )
-    if args.experiment:
-        experiment_name = args.experiment
-    elif task_indices is None:
-        experiment_name = _EXPERIMENT_NAME_FULL
-    elif sorted(task_indices) == [0, 1]:
-        experiment_name = _EXPERIMENT_NAME_TASK01
-    elif sorted(task_indices) == [0]:
-        experiment_name = _EXPERIMENT_NAME_TASK0
-    else:
-        # 其他任意子集：架构与全集相同，直接用全集实验配置
-        experiment_name = _EXPERIMENT_NAME_FULL
+    experiment_name, benchmark_name, task_indices = resolve_experiment_and_filter(
+        experiment=args.experiment,
+        benchmark=args.benchmark,
+        task_indices=raw_task_indices,
+    )
 
     # ── 1. 加载 WM ──────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     print("加载 World Model …")
     print(f"  ckpt        : {args.ckpt}")
     print(f"  experiment  : {experiment_name}")
+    print(f"  benchmark   : {benchmark_name if benchmark_name is not None else 'all'}")
     print(f"  task_indices: {task_indices if task_indices is not None else 'all'}")
     print(f"{'='*60}\n")
 
-    from cosmos_predict2._src.predict2.inference.video2world import Video2WorldInference
+    from wm4vla.inference.video2world import Video2WorldInference, resolve_tokenizer_overrides
 
-    experiment_opts: List[str] = []
-    tokenizer_backend = "lightvae" if args.use_lightvae else args.tokenizer_backend
-    tokenizer_vae_pth = args.tokenizer_vae_pth
+    tokenizer_backend, tokenizer_vae_pth, experiment_opts = resolve_tokenizer_overrides(
+        tokenizer_backend=args.tokenizer_backend,
+        tokenizer_vae_pth=args.tokenizer_vae_pth,
+        lightx2v_root=args.lightx2v_root,
+        use_lightvae=args.use_lightvae,
+        lightvae_pth=args.lightvae_pth,
+        experiment_opts=args.experiment_opts,
+    )
     if tokenizer_backend == "lightvae":
-        tokenizer_vae_pth = tokenizer_vae_pth or args.lightvae_pth
-        experiment_opts.extend(
-            [
-                "tokenizer=wan2pt1_lightvae_tokenizer",
-                f"model.config.tokenizer.vae_pth={tokenizer_vae_pth}",
-            ]
-        )
-        if args.lightx2v_root:
-            experiment_opts.append(f"+model.config.tokenizer.lightx2v_root={args.lightx2v_root}")
         print(f"[info] Tokenizer backend=lightvae, overrides: {experiment_opts}")
-    else:
-        if args.lightx2v_root:
-            print("[warn] --lightx2v-root is ignored when tokenizer backend is wan2pt1")
-        if tokenizer_vae_pth:
-            experiment_opts.extend(
-                [
-                    "tokenizer=wan2pt1_tokenizer",
-                    f"model.config.tokenizer.vae_pth={tokenizer_vae_pth}",
-                ]
-            )
-            print(f"[info] Tokenizer backend=wan2pt1, overrides: {experiment_opts}")
+    elif experiment_opts:
+        print(f"[info] Tokenizer backend=wan2pt1, overrides: {experiment_opts}")
+    if tokenizer_backend != "lightvae" and args.lightx2v_root:
+        print("[warn] --lightx2v-root is ignored when tokenizer backend is wan2pt1")
 
     wm = Video2WorldInference(
         experiment_name=experiment_name,
@@ -487,11 +599,12 @@ def evaluate(args):
         max_delay=_MAX_DELAY,
         samples_per_episode=args.samples_per_episode,
         sample_seed=args.seed,
+        benchmark=benchmark_name,
         task_indices=task_indices,
     )
 
     # ── 5. 初始化指标容器 ─────────────────────────────────────────────────
-    delays = [d for d in DEFAULT_EVAL_DELAYS if 1 <= d <= 4]
+    delays = list(args.delays)
     # 汇总指标：results[d]
     results = {d: defaultdict(list) for d in delays}
     # 按任务细分：results_per_task[task_idx][d]（多任务评估时展示各任务独立指标）
@@ -507,10 +620,8 @@ def evaluate(args):
     done = 0
     t_start = time.time()
 
-    print(
-        f"\n开始评估，共 {total_windows} 个 (episode, start_t) × {len(delays)} delays = "
-        f"{total_windows * len(delays)} 次推理 …\n"
-    )
+    print(f"\n开始评估，共 {total_windows} 个 (episode, start_t) × {len(delays)} delays = "
+          f"{total_windows * len(delays)} 次评估 …\n")
 
     for ep_idx, (file_path, ep_task_index, start_ts) in enumerate(episode_samples):
         ep_name = file_path.stem  # e.g. "episode_000042"
@@ -528,12 +639,13 @@ def evaluate(args):
 
         # 读取整个 episode（~10-15 MB per parquet）
         df = pd.read_parquet(file_path)
+        schema = resolve_episode_schema(df.columns)
         T = len(df)
 
         for start_t in start_ts:
             # 解码当前帧
-            cam1_t = _decode_image(df[_CAM1_KEY].iloc[start_t])
-            cam2_t = _decode_image(df[_CAM2_KEY].iloc[start_t])
+            cam1_t = _decode_image(df[schema["cam1"]].iloc[start_t])
+            cam2_t = _decode_image(df[schema["cam2"]].iloc[start_t])
 
             # 构建 WM 输入（一次构建，4 个 d 复用）
             vid_input = build_input_video(cam1_t, cam2_t)
@@ -545,8 +657,8 @@ def evaluate(args):
                     continue
 
                 # GT 帧
-                cam1_gt = _decode_image(df[_CAM1_KEY].iloc[pred_t])
-                cam2_gt = _decode_image(df[_CAM2_KEY].iloc[pred_t])
+                cam1_gt = _decode_image(df[schema["cam1"]].iloc[pred_t])
+                cam2_gt = _decode_image(df[schema["cam2"]].iloc[pred_t])
 
                 if d == 0 and BYPASS_WM_WHEN_DELAY_ZERO:
                     cam1_pred_t = cam1_t.copy()
@@ -554,7 +666,13 @@ def evaluate(args):
                     video_out = None
                 else:
                     action_rows = np.stack(
-                        [np.asarray(df[_ACT_KEY].iloc[start_t + offset], dtype=np.float32) for offset in range(d)],
+                        [
+                            np.asarray(
+                                df[schema["action"]].iloc[start_t + offset],
+                                dtype=np.float32,
+                            )
+                            for offset in range(d)
+                        ],
                         axis=0,
                     )
                     action, delay_scalar = build_action_inputs(action_rows, delay=d, batch_size=2)
@@ -593,7 +711,7 @@ def evaluate(args):
                 results_per_task[ep_task_index][d]["cam1_ssim"].append(ssim1)
                 results_per_task[ep_task_index][d]["cam2_ssim"].append(ssim2)
 
-                if lpips_fn is not None:
+                if lpips_fn is not None and video_out is not None:
                     with torch.no_grad():
                         # LPIPS 输入：[-1, 1] float，(1, 3, H, W)
                         t1_pred = video_out[0:1, :, 1].float()
@@ -716,6 +834,7 @@ def evaluate(args):
             "ckpt": str(args.ckpt),
             "data_root": str(data_root),
             "experiment": experiment_name,
+            "benchmark": benchmark_name,
             "task_indices": task_indices,
             "val_ratio": 0.1,
             "split_seed": 0,
@@ -724,9 +843,6 @@ def evaluate(args):
             "num_steps": args.num_steps,
             "guidance": args.guidance,
             "t5_emb_path": str(args.t5_emb_path) if args.t5_emb_path else None,
-            "tokenizer_backend": tokenizer_backend,
-            "tokenizer_vae_pth": str(tokenizer_vae_pth) if tokenizer_vae_pth else None,
-            "lightx2v_root": str(args.lightx2v_root) if tokenizer_backend == "lightvae" and args.lightx2v_root else None,
             "delays_evaluated": delays,
         }
         out = {"meta": meta, "results": summary}
@@ -759,8 +875,24 @@ def parse_args():
     p.add_argument(
         "--experiment", type=str, default=None,
         help=(
-            "Experiment name. Defaults to ac_libero_lerobot_256_pixels_2b_task0 "
-            "when --task-indices is given, else ac_libero_lerobot_256_pixels_2b."
+            "Experiment name. Supports: "
+            "ac_pi_libero_256_pixels_2b_all, "
+            "ac_pi_libero_256_pixels_2b_10, "
+            "ac_pi_libero_256_pixels_2b_goal, "
+            "ac_pi_libero_256_pixels_2b_object, "
+            "ac_pi_libero_256_pixels_2b_spatial. "
+            f"Default: {_DEFAULT_EXPERIMENT}."
+        ),
+    )
+    p.add_argument(
+        "--benchmark",
+        type=str,
+        default=None,
+        choices=["all", *sorted(PI_LIBERO_BENCHMARK_TASKS)],
+        help=(
+            "Optional benchmark subset for pi_libero evaluation. "
+            "When --experiment is one of ac_pi_libero_256_pixels_2b_{10,goal,object,spatial}, "
+            "the benchmark is inferred automatically."
         ),
     )
     p.add_argument(
@@ -824,6 +956,14 @@ def parse_args():
     p.add_argument(
         "--lightx2v-root", type=str, default="",
         help="Optional LightX2V repo root (used when lightx2v is not importable from PYTHONPATH).",
+    )
+    p.add_argument(
+        "--experiment-opts", nargs="*", default=[],
+        help="Additional Hydra overrides passed to the WM config (optional).",
+    )
+    p.add_argument(
+        "--delays", type=int, nargs="+", default=list(DEFAULT_EVAL_DELAYS),
+        help="Which delays to evaluate (0 bypasses WM and uses the real observation)",
     )
     return p.parse_args()
 

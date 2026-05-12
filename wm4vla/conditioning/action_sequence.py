@@ -23,6 +23,12 @@ def pack_masked_action_sequence(
 
     Output layout per slot:
       [raw_action..., action_mask]
+
+    Args:
+        actions: Array with shape [delay, action_dim] or [action_dim] when
+            delay == 1.
+        delay: Number of valid actions to keep in the prefix.
+        chunk_len: Fixed number of action slots.
     """
     if delay < 0 or delay > chunk_len:
         raise ValueError(f"delay must be in [0, {chunk_len}], got {delay}")
